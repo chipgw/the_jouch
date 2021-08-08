@@ -1,10 +1,12 @@
 use ron::{de::from_reader,ser::to_writer};
 use std::{fs::File, io::{Error,ErrorKind}, path::Path};
 use serde::{Serialize,Deserialize};
+use serenity::prelude::TypeMapKey;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
     pub token: String,
+    pub prefix: String,
 }
 
 const CONFIG_PATH: &str = "config.ron";
@@ -18,6 +20,7 @@ impl Config {
         } else {
             Ok(Config {
                 token: String::new(),
+                prefix: "~".into(),
             })
         }
     }
@@ -29,4 +32,8 @@ impl Config {
 
         Ok(())
     }
+}
+
+impl TypeMapKey for Config {
+    type Value = Config;
 }

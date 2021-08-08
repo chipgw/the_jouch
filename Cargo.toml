@@ -10,8 +10,7 @@ edition = "2018"
 serenity = "0.10"
 tokio = "1.9"
 mini-redis = "*"
-chrono = "0.4"
+chrono = { version ="0.4", features = ["serde"] }
 serde = "1.0"
 rustbreak = { version = "2", features = ["ron_enc"] }
 ron = "*"
-merge = "0.1"

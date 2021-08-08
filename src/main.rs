@@ -23,10 +23,10 @@ use serenity::{
     http::Http,
 };
 
-use commands::birthday::*;
+use commands::{birthday::*, clear::*};
 
 #[group]
-#[commands(birthday)]
+#[commands(birthday, clear_from)]
 struct General;
 
 struct Handler;
@@ -94,7 +94,7 @@ async fn main() {
 
     let framework = StandardFramework::new()
         .configure(|c| c
-            .prefix("~")// set the bot's prefix to "~"
+            .prefix(config.prefix.as_str())
             .on_mention(Some(bot_id))
             .owners(owners)) 
         .group(&GENERAL_GROUP)
@@ -104,8 +104,8 @@ async fn main() {
         .unrecognised_command(unknown_command)
         .normal_message(normal_message);
 
-    // Login with a bot token from the environment
-    let mut client = Client::builder(config.token)
+    // Login with a bot token from the configuration file
+    let mut client = Client::builder(config.token.as_str())
         .event_handler(Handler)
         .framework(framework)
         .await
@@ -114,6 +114,7 @@ async fn main() {
     {
         let mut data = client.data.write().await;
         data.insert::<db::Db>(db::Db::new().expect("Unable to init database!"));
+        data.insert::<config::Config>(config);
     }
     
     // start listening for events by starting a single shard

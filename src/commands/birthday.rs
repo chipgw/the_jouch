@@ -60,8 +60,63 @@ pub async fn set_birthday(ctx: &Context, msg: &Message, mut args: Args) -> Comma
 
     Ok(MessageBuilder::new()
         .push("Set birthday to ")
-        .push_bold_safe(date)
+        .push_bold_safe(date.date())
         .build())
+}
+
+pub async fn todays_birthdays(ctx: &Context, msg: &Message) -> CommandResult<String> {
+    let mut message = MessageBuilder::new();
+    message.push("Birthdays today: ");
+    let mut birthday_count = 0;
+
+    let mut data = ctx.data.write().await;
+    let db = data.get_mut::<Db>().ok_or("Unable to get database")?;
+    db.foreach(msg.guild_id.ok_or("Unable to get guild where command was sent")?, |user_id,user_data|{
+        if let Some(birthday) = user_data.birthday {
+            let now = Local::today();
+            if now.day() == birthday.day() && now.month() == birthday.month() {
+                message.mention(&UserId(*user_id));
+                birthday_count += 1;
+            }
+        }
+    })?;
+    if birthday_count == 0 {
+        message.push("None");
+    } else {
+        message.push("\nHappy Birthday!");
+    }
+    Ok(message.build())
+}
+
+pub async fn user_birthdays(ctx: &Context, msg: &Message) -> CommandResult<String> {
+    let mut message = MessageBuilder::new();
+    for mention in &msg.mentions {
+        message.mention(mention).push("'s birthday is ");
+
+        let key = UserKey {
+            user: mention.id, 
+            guild: msg.guild_id.ok_or("Unable to get guild where command was sent")?,
+        };
+
+        let mut data = ctx.data.write().await;
+        let db = data.get_mut::<Db>().ok_or("Unable to get database")?;
+        db.read(key, |user_data|{
+            match user_data.birthday {
+                Some(birthday) => {
+                    let now = Local::today();
+                    if now.day() == birthday.day() && now.month() == birthday.month() {
+                        message.push_line("today! Happy Birthday!");
+                    } else {
+                        message.push_line(birthday.date());
+                    }
+                },
+                None => {
+                    message.push_line("not set");
+                },
+            }
+        })?;
+    }
+    Ok(message.build())
 }
 
 #[command]
@@ -78,8 +133,11 @@ pub async fn birthday(ctx: &Context, msg: &Message, mut args: Args) -> CommandRe
             set_birthday(ctx, msg, args).await?
         },
         "check" => {
-            // TODO - is it someone's birthday today?
-            "No birthdays today.".into()
+            if msg.mentions.is_empty() {
+                todays_birthdays(ctx, msg).await?
+            } else {
+                user_birthdays(ctx, msg).await?
+            }
         },
         _ => {
             MessageBuilder::new()

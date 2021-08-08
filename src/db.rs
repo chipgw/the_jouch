@@ -5,21 +5,14 @@ use rustbreak::{deser::Ron, PathDatabase, error};
 use serenity::prelude::TypeMapKey;
 use serenity::model::id::{UserId,GuildId};
 use serde::{Serialize, Deserialize};
-use merge::Merge;
 
-type DbType = PathDatabase<HashMap<u128, UserData>, Ron>;
+type DbType = PathDatabase<HashMap<u64, GuildData>, Ron>;
 
 // Would have made a struct but it won't work with the database/serialization of HashMap
 #[derive(Eq, PartialEq, Debug, Serialize, Deserialize, Clone, Default)]
 pub struct UserKey {
     pub user: UserId,
     pub guild: GuildId,
-}
-
-impl From<UserKey> for u128 {
-    fn from(key: UserKey) -> Self {
-        (u64::from(key.user) as u128) << 64 | u64::from(key.guild) as u128
-    }
 }
 
 pub struct Db {
@@ -38,11 +31,39 @@ impl Db {
         T: FnOnce(&mut UserData) -> R
     {
         let r = self.db.write(|db| { 
-            let entry = db.entry(user_key.into()).or_default();
-            task(entry)
+            let guild_entry = db.entry(user_key.guild.into()).or_default();
+            let user_entry = guild_entry.users.entry(user_key.user.into()).or_default();
+            task(user_entry)
         })?;
         self.db.save()?;
         Ok(r)
+    }
+
+    pub fn read<T, R>(&mut self, user_key: UserKey, task: T) -> error::Result<Option<R>> 
+    where 
+        T: FnOnce(&UserData) -> R
+    {
+        Ok(self.db.read(|db| { 
+            if let Some(guild_entry) = db.get(&user_key.guild.into()) {
+                if let Some(user_entry) = guild_entry.users.get(&user_key.user.into()) {
+                    return Some(task(user_entry));
+                }
+            }
+            return None;
+        })?)
+    }
+
+    pub fn foreach<T>(&mut self, guild: GuildId, mut task: T) -> error::Result<()> 
+    where 
+        T: FnMut(&u64, &UserData)
+    {
+        Ok(self.db.read(|db| {
+            if let Some(guild_entry) = db.get(&guild.into()) {
+                for (user_key, user_data) in &guild_entry.users {
+                    task(&user_key,&user_data);
+                }
+            }
+        })?)
     }
 }
 
@@ -50,8 +71,13 @@ impl TypeMapKey for Db {
     type Value = Db;
 }
 
-#[derive(Eq, PartialEq, Debug, Serialize, Deserialize, Clone, Default, Merge)]
+#[derive(Eq, PartialEq, Debug, Serialize, Deserialize, Clone, Default)]
 pub struct UserData {
     pub birthday: Option<DateTime<FixedOffset>>,
     pub auto_nick: Option<String>,
+}
+
+#[derive(Eq, PartialEq, Debug, Serialize, Deserialize, Clone, Default)]
+pub struct GuildData {
+    pub users: HashMap<u64,UserData>,
 }
