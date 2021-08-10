@@ -14,3 +14,6 @@ chrono = { version ="0.4", features = ["serde"] }
 serde = "1.0"
 rustbreak = { version = "2", features = ["ron_enc"] }
 ron = "*"
+image = "0.23"
+webp = { version = "0.1", features = ["img"] }
+reqwest = "*"

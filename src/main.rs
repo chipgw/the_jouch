@@ -23,10 +23,10 @@ use serenity::{
     http::Http,
 };
 
-use commands::{birthday::*, clear::*};
+use commands::{birthday::*, clear::*, sit::*};
 
 #[group]
-#[commands(birthday, clear_from)]
+#[commands(birthday, clear_from, sit)]
 struct General;
 
 struct Handler;
