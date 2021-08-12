@@ -13,6 +13,13 @@ const TIME_OPTIONS: &[&str] = &[
     "T%H:%M%#z",    // e.g. T12:30
     "",             // no time provided
 ];
+
+// would have just made this const but there's no way to do a const Date as far as I can tell
+#[inline]
+pub fn get_bot_birthday() -> NaiveDate {
+    NaiveDate::from_ymd(2021, 7, 31)
+}
+
 pub fn parse_date(date_str: &str) -> CommandResult<DateTime<FixedOffset>> {
     // Default to CST
     let default_offset: FixedOffset = FixedOffset::west(21600);
@@ -71,15 +78,20 @@ pub async fn todays_birthdays(ctx: &Context, msg: &Message) -> CommandResult<Str
 
     let mut data = ctx.data.write().await;
     let db = data.get_mut::<Db>().ok_or("Unable to get database")?;
+    let now = Local::today();
     db.foreach(msg.guild_id.ok_or("Unable to get guild where command was sent")?, |user_id,user_data|{
         if let Some(birthday) = user_data.birthday {
-            let now = Local::today();
             if now.day() == birthday.day() && now.month() == birthday.month() {
                 message.mention(&UserId(*user_id));
                 birthday_count += 1;
             }
         }
     })?;
+    let bot_birthday = get_bot_birthday();
+    if now.day() == bot_birthday.day() && now.month() == bot_birthday.month() {
+        message.mention(&ctx.cache.current_user_id().await);
+        birthday_count += 1;
+    }
     if birthday_count == 0 {
         message.push("None");
     } else {
@@ -90,8 +102,19 @@ pub async fn todays_birthdays(ctx: &Context, msg: &Message) -> CommandResult<Str
 
 pub async fn user_birthdays(ctx: &Context, msg: &Message) -> CommandResult<String> {
     let mut message = MessageBuilder::new();
+    let now = Local::today();
     for mention in &msg.mentions {
         message.mention(mention).push("'s birthday is ");
+
+        if mention.id == ctx.cache.current_user_id().await {
+            let bot_birthday = get_bot_birthday();
+            if now.day() == bot_birthday.day() && now.month() == bot_birthday.month() {
+                message.push_line("today! Happy Birthday!");
+            } else {
+                message.push_line(bot_birthday);
+            }
+            continue;
+        }
 
         let key = UserKey {
             user: mention.id, 
@@ -103,7 +126,6 @@ pub async fn user_birthdays(ctx: &Context, msg: &Message) -> CommandResult<Strin
         db.read(key, |user_data|{
             match user_data.birthday {
                 Some(birthday) => {
-                    let now = Local::today();
                     if now.day() == birthday.day() && now.month() == birthday.month() {
                         message.push_line("today! Happy Birthday!");
                     } else {
