@@ -16,8 +16,8 @@ async fn get_face(user: &User) -> CommandResult<DynamicImage> {
     }.resize(128, 128, FilterType::CatmullRom))
 }
 
-// stolen from copy_from, but with blending the source & target pixels rather than replacement.
-fn blend(target: &mut DynamicImage, source: &DynamicImage, x: u32, y: u32) -> ImageResult<()>
+// basically stolen from copy_from, but with blending the source & target pixels rather than replacement & limiting to a circle.
+fn blend_circle(target: &mut DynamicImage, source: &DynamicImage, x: u32, y: u32) -> ImageResult<()>
 {
     // Do bounds checking here so we can use the non-bounds-checking
     // functions to copy pixels.
@@ -27,11 +27,19 @@ fn blend(target: &mut DynamicImage, source: &DynamicImage, x: u32, y: u32) -> Im
         )));
     }
 
+    let source_ctr = source.height() as f32 / 2.0;
+    let r_squared = source_ctr * source_ctr;
+
     for k in 0..source.height() {
         for i in 0..source.width() {
-            let mut out_pixel = target.get_pixel(i + x, k + y);
-            out_pixel.blend(&source.get_pixel(i, k));
-            target.put_pixel(i + x, k + y, out_pixel);
+            let coord = (i as f32 - source_ctr, k as f32 - source_ctr);
+            // Limit to circle since that's how Discord shows profile pictures
+            // TODO - could try to do some kind of anti-aliasing to this...
+            if (coord.0 * coord.0 + coord.1 * coord.1) < r_squared {
+                let mut out_pixel = target.get_pixel(i + x, k + y);
+                out_pixel.blend(&source.get_pixel(i, k));
+                target.put_pixel(i + x, k + y, out_pixel);
+            }
         }
     }
     Ok(())
@@ -72,10 +80,10 @@ pub async fn sit(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult 
     if with {
         let with_avatar = get_face(&msg.mentions[0]).await?;
 
-        blend(&mut base_image, &author_avatar, SIT_WITH.0, SIT_WITH.1)?;
-        blend(&mut base_image, &with_avatar, SIT_WITH.2, SIT_WITH.3)?;
+        blend_circle(&mut base_image, &author_avatar, SIT_WITH.0, SIT_WITH.1)?;
+        blend_circle(&mut base_image, &with_avatar, SIT_WITH.2, SIT_WITH.3)?;
     } else {
-        blend(&mut base_image, &author_avatar, SIT_ONE.0, SIT_ONE.1)?;
+        blend_circle(&mut base_image, &author_avatar, SIT_ONE.0, SIT_ONE.1)?;
     }
 
     let mut image_bytes: Vec<u8> = vec![];
