@@ -3,6 +3,8 @@ use serenity::model::prelude::*;
 use serenity::prelude::*;
 use serenity::utils::MessageBuilder;
 use chrono::prelude::*;
+use serde::{Serialize, Deserialize};
+use enum_utils::FromStr;
 use crate::db::{Db, UserKey};
 
 const DATE_OPTIONS: &[&str] = &[
@@ -13,6 +15,31 @@ const TIME_OPTIONS: &[&str] = &[
     "T%H:%M%#z",    // e.g. T12:30
     "",             // no time provided
 ];
+
+#[derive(Eq, PartialEq, Debug, Serialize, Deserialize, Clone, Copy, FromStr)]
+#[enumeration(case_insensitive)]
+pub enum BirthdayPrivacy {
+    // Public YMD
+    #[enumeration(alias = "Public")]
+    PublicFull,
+
+    // Only MD public
+    #[enumeration(alias = "DayOnly", alias = "MonthDay")]
+    PublicDay,
+
+    // Only known to the bot (to be used internally)
+    #[enumeration(alias = "Hidden")]
+    Private,
+}
+impl BirthdayPrivacy {
+    pub fn date_format(&self) -> &str {
+        match self {
+            Self::PublicFull => "%F",
+            Self::PublicDay => "%m-%d",
+            Self::Private => "private",
+        }
+    }
+}
 
 // would have just made this const but there's no way to do a const Date as far as I can tell
 #[inline]
@@ -54,6 +81,9 @@ pub fn parse_date(date_str: &str) -> CommandResult<DateTime<FixedOffset>> {
 pub async fn set_birthday(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult<String> {
     let date = parse_date(args.current().ok_or("No date argument passed")?)?;
     args.advance();
+
+    // TODO - edit or remove original message to maintain privacy if it's set to private
+    let privacy = args.find::<BirthdayPrivacy>().ok();
     
     let mut data = ctx.data.write().await;
     let db = data.get_mut::<Db>().ok_or("Unable to get database")?;
@@ -63,11 +93,14 @@ pub async fn set_birthday(ctx: &Context, msg: &Message, mut args: Args) -> Comma
         guild: msg.guild_id.ok_or("Unable to get guild where command was sent")?,
     };
 
-    db.update(key, |data| { data.birthday = Some(date) })?;
+    db.update(key, |data| { 
+        data.birthday = Some(date);
+        data.birthday_privacy = privacy;
+    })?;
 
     Ok(MessageBuilder::new()
         .push("Set birthday to ")
-        .push_bold_safe(date.date())
+        .push_bold_safe(date.format(privacy.unwrap_or(BirthdayPrivacy::PublicFull).date_format()))
         .build())
 }
 
@@ -81,7 +114,7 @@ pub async fn todays_birthdays(ctx: &Context, msg: &Message) -> CommandResult<Str
     let now = Local::today();
     db.foreach(msg.guild_id.ok_or("Unable to get guild where command was sent")?, |user_id,user_data|{
         if let Some(birthday) = user_data.birthday {
-            if now.day() == birthday.day() && now.month() == birthday.month() {
+            if now.day() == birthday.day() && now.month() == birthday.month() && user_data.birthday_privacy != Some(BirthdayPrivacy::Private) {
                 message.mention(&UserId(*user_id));
                 birthday_count += 1;
             }
@@ -126,8 +159,10 @@ pub async fn user_birthdays(ctx: &Context, msg: &Message) -> CommandResult<Strin
         db.read(key, |user_data|{
             match user_data.birthday {
                 Some(birthday) => {
-                    if now.day() == birthday.day() && now.month() == birthday.month() {
+                    if now.day() == birthday.day() && now.month() == birthday.month() && user_data.birthday_privacy != Some(BirthdayPrivacy::Private) {
                         message.push_line("today! Happy Birthday!");
+                    } else if let Some(privacy) = user_data.birthday_privacy {
+                        message.push_line(birthday.format(privacy.date_format()));
                     } else {
                         message.push_line(birthday.date());
                     }

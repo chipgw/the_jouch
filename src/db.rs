@@ -1,10 +1,11 @@
 use std::collections::HashMap;
-
 use chrono::{DateTime, FixedOffset};
 use rustbreak::{deser::Ron, PathDatabase, error};
 use serenity::prelude::TypeMapKey;
 use serenity::model::id::{UserId,GuildId};
 use serde::{Serialize, Deserialize};
+
+use crate::commands::birthday::BirthdayPrivacy;
 
 type DbType = PathDatabase<HashMap<u64, GuildData>, Ron>;
 
@@ -74,6 +75,7 @@ impl TypeMapKey for Db {
 #[derive(Eq, PartialEq, Debug, Serialize, Deserialize, Clone, Default)]
 pub struct UserData {
     pub birthday: Option<DateTime<FixedOffset>>,
+    pub birthday_privacy: Option<BirthdayPrivacy>,
     pub auto_nick: Option<String>,
 }
 

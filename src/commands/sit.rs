@@ -17,8 +17,7 @@ async fn get_face(user: &User) -> CommandResult<DynamicImage> {
 }
 
 // basically stolen from copy_from, but with blending the source & target pixels rather than replacement & limiting to a circle.
-fn blend_circle(target: &mut DynamicImage, source: &DynamicImage, x: u32, y: u32) -> ImageResult<()>
-{
+fn blend_circle(target: &mut DynamicImage, source: &DynamicImage, x: u32, y: u32) -> ImageResult<()> {
     // Do bounds checking here so we can use the non-bounds-checking
     // functions to copy pixels.
     if target.width() < source.width() + x || target.height() < source.height() + y {

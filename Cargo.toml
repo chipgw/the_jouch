@@ -17,3 +17,4 @@ ron = "*"
 image = "0.23"
 webp = { version = "0.1", features = ["img"] }
 reqwest = "*"
+enum-utils = "0.1"
