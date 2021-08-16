@@ -1,6 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use chrono::{DateTime, FixedOffset};
 use rustbreak::{deser::Ron, PathDatabase, error};
+use serenity::framework::standard::CommandResult;
 use serenity::prelude::TypeMapKey;
 use serenity::model::id::{UserId,GuildId};
 use serde::{Serialize, Deserialize};
@@ -40,7 +41,7 @@ impl Db {
         Ok(r)
     }
 
-    pub fn read<T, R>(&mut self, user_key: UserKey, task: T) -> error::Result<Option<R>> 
+    pub fn read<T, R>(&self, user_key: UserKey, task: T) -> error::Result<Option<R>> 
     where 
         T: FnOnce(&UserData) -> R
     {
@@ -54,7 +55,15 @@ impl Db {
         })?)
     }
 
-    pub fn foreach<T>(&mut self, guild: GuildId, mut task: T) -> error::Result<()> 
+    pub fn get_users(&self, guild: GuildId) -> CommandResult<HashSet<u64>> {
+        self.db.read(|db| {
+            let guild_entry = db.get(&guild.into()).ok_or("Unable to find guild in database")?;
+            
+            Ok(guild_entry.users.keys().cloned().collect())
+        })?
+    }
+
+    pub fn foreach<T>(&self, guild: GuildId, mut task: T) -> error::Result<()> 
     where 
         T: FnMut(&u64, &UserData)
     {

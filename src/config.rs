@@ -7,6 +7,7 @@ use serenity::prelude::TypeMapKey;
 pub struct Config {
     pub token: String,
     pub prefix: String,
+    pub nick_interval: Option<u64>,
 }
 
 const CONFIG_PATH: &str = "config.ron";
@@ -21,6 +22,7 @@ impl Config {
             Ok(Config {
                 token: String::new(),
                 prefix: "~".into(),
+                nick_interval: Some(crate::commands::autonick::DEFAULT_INTERVAL),
             })
         }
     }

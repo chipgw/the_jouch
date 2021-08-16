@@ -2,68 +2,31 @@ mod commands;
 mod db;
 mod config;
 
-use std::{
-    collections::HashSet,
-};
+use std::{collections::HashSet};
 
-use serenity::{
-    async_trait,
-    client::{Client, Context, EventHandler},
-    model::{
-        channel::Message,
-        gateway::Ready,
-    },
-    framework::standard::{
+use serenity::{async_trait, client::{Client, Context, EventHandler}, framework::standard::{
         StandardFramework,
         macros::{group, hook},
         DispatchError,
         CommandResult,
-    },
-    utils::MessageBuilder,
-    http::Http,
-};
+    }, http::Http, model::{channel::Message, gateway::Ready, id::GuildId}, utils::MessageBuilder};
 
-use commands::{birthday::*, clear::*, sit::*};
+use commands::{birthday::*, clear::*, sit::*, autonick::*};
 
 #[group]
-#[commands(birthday, clear_from, sit)]
+#[commands(birthday, clear_from, sit, autonick)]
 struct General;
 
 struct Handler;
 
 #[async_trait]
 impl EventHandler for Handler {
-    async fn message(&self, context: Context, msg: Message) {
-        if msg.content == "~ping" {
-            let channel = match msg.channel_id.to_channel(&context).await {
-                Ok(channel) => channel,
-                Err(why) => {
-                    println!("Error getting channel: {:?}", why);
-
-                    return;
-                },
-            };
-
-            // The message builder allows for creating a message by
-            // mentioning users dynamically, pushing "safe" versions of
-            // content (such as bolding normalized content), displaying
-            // emojis, and more.
-            let response = MessageBuilder::new()
-                .push("User ")
-                .push_bold_safe(&msg.author.name)
-                .push(" used the 'ping' command in the ")
-                .mention(&channel)
-                .push(" channel")
-                .build();
-
-            if let Err(why) = msg.channel_id.say(&context.http, &response).await {
-                println!("Error sending message: {:?}", why);
-            }
-        }
-    }
-
     async fn ready(&self, _: Context, ready: Ready) {
         println!("{} is connected!", ready.user.name);
+    }
+    async fn cache_ready(&self, ctx: Context, guilds: Vec<GuildId>) {
+        // Spawn the nickname checker.
+        tokio::spawn(check_nicks_loop(ctx, guilds));
     }
 }
 
@@ -116,7 +79,7 @@ async fn main() {
         data.insert::<db::Db>(db::Db::new().expect("Unable to init database!"));
         data.insert::<config::Config>(config);
     }
-    
+
     // start listening for events by starting a single shard
     if let Err(why) = client.start().await {
         println!("An error occurred while running the client: {:?}", why);
@@ -144,13 +107,7 @@ async fn dispatch_error(context: &Context, msg: &Message, error: DispatchError) 
 async fn before(_ctx: &Context, msg: &Message, command_name: &str) -> bool {
     println!("Got command '{}' by user '{}'", command_name, msg.author.name);
 
-    // Increment the number of times this command has been run once. If
-    // the command's name does not exist in the counter, add a default
-    // value of 0.
-    // let mut data = ctx.data.write().await;
-    // let counter = data.get_mut::<CommandCounter>().expect("Expected CommandCounter in TypeMap.");
-    // let entry = counter.entry(command_name.to_string()).or_insert(0);
-    // *entry += 1;
+    // TODO - let guilds enable/disable features and filter out disabled commands here
 
     true // if `before` returns false, command processing doesn't happen.
 }
@@ -180,12 +137,6 @@ async fn unknown_command(_ctx: &Context, _msg: &Message, unknown_command_name: &
 }
 
 #[hook]
-async fn normal_message(_ctx: &Context, msg: &Message) {
-    println!("Message is not a command '{}'", msg.content);
-}
-
-#[hook]
-async fn delay_action(ctx: &Context, msg: &Message) {
-    // You may want to handle a Discord rate limit if this fails.
-    let _ = msg.react(ctx, '⏱').await;
+async fn normal_message(_ctx: &Context, _msg: &Message) {
+    // TODO - respond to messages based on certain words
 }
