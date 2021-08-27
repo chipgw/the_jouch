@@ -1,8 +1,9 @@
+use std::collections::HashSet;
 use serenity::framework::standard::{macros::command, Args, CommandResult};
 use serenity::model::prelude::*;
 use serenity::prelude::*;
 use serenity::utils::MessageBuilder;
-use chrono::prelude::*;
+use chrono::{Duration, prelude::*};
 use serde::{Serialize, Deserialize};
 use enum_utils::FromStr;
 use crate::db::{Db, UserKey};
@@ -93,7 +94,7 @@ pub async fn set_birthday(ctx: &Context, msg: &Message, mut args: Args) -> Comma
         guild: msg.guild_id.ok_or("Unable to get guild where command was sent")?,
     };
 
-    db.update(key, |data| { 
+    db.update(&key, |data| { 
         data.birthday = Some(date);
         data.birthday_privacy = privacy;
     })?;
@@ -104,7 +105,7 @@ pub async fn set_birthday(ctx: &Context, msg: &Message, mut args: Args) -> Comma
         .build())
 }
 
-pub async fn todays_birthdays(ctx: &Context, msg: &Message) -> CommandResult<String> {
+pub async fn todays_birthdays(ctx: &Context, guild: GuildId) -> CommandResult<String> {
     let mut message = MessageBuilder::new();
     message.push("Birthdays today: ");
     let mut birthday_count = 0;
@@ -112,7 +113,7 @@ pub async fn todays_birthdays(ctx: &Context, msg: &Message) -> CommandResult<Str
     let mut data = ctx.data.write().await;
     let db = data.get_mut::<Db>().ok_or("Unable to get database")?;
     let now = Local::today();
-    db.foreach(msg.guild_id.ok_or("Unable to get guild where command was sent")?, |user_id,user_data|{
+    db.foreach(guild, |user_id,user_data|{
         if let Some(birthday) = user_data.birthday {
             if now.day() == birthday.day() && now.month() == birthday.month() && user_data.birthday_privacy != Some(BirthdayPrivacy::Private) {
                 message.mention(&UserId(*user_id));
@@ -156,7 +157,7 @@ pub async fn user_birthdays(ctx: &Context, msg: &Message) -> CommandResult<Strin
 
         let mut data = ctx.data.write().await;
         let db = data.get_mut::<Db>().ok_or("Unable to get database")?;
-        db.read(key, |user_data|{
+        db.read(&key, |user_data|{
             match user_data.birthday {
                 Some(birthday) => {
                     if now.day() == birthday.day() && now.month() == birthday.month() && user_data.birthday_privacy != Some(BirthdayPrivacy::Private) {
@@ -191,7 +192,7 @@ pub async fn birthday(ctx: &Context, msg: &Message, mut args: Args) -> CommandRe
         },
         "check" => {
             if msg.mentions.is_empty() {
-                todays_birthdays(ctx, msg).await?
+                todays_birthdays(ctx, msg.guild_id.ok_or("Unable to get guild where command was sent")?).await?
             } else {
                 user_birthdays(ctx, msg).await?
             }
@@ -207,4 +208,62 @@ pub async fn birthday(ctx: &Context, msg: &Message, mut args: Args) -> CommandRe
     msg.reply(ctx, response).await?;
 
     Ok(())
+}
+
+// function to be spun off into its own thread to periodically check for birthdays
+pub async fn check_birthdays_loop(ctx: Context) {
+    loop {
+        let guilds = {
+            let data = ctx.data.read().await;
+            if let Some(db) = data.get::<Db>() {
+                db.get_guilds().unwrap_or_default()
+            } else {
+                println!("error getting database");
+                HashSet::new()
+            }
+        };
+        for guild in &guilds {
+            let (announce_channel, announce_when_none) = {
+                let data = ctx.data.read().await;
+                if let Some(db) = data.get::<Db>() {
+                    let data = db.read_guild(*guild, |guild_data|{
+                        (guild_data.birthday_announce_channel, guild_data.birthday_announce_when_none)
+                    });
+                    match data {
+                        Ok(data) => data.unwrap_or_default(),
+                        Err(err) => {
+                            println!("error getting guild data for guild {}; {:?}", guild, err);
+                            (None, None)
+                        }
+                    }
+                } else {
+                    println!("error getting database");
+                    (None, None)
+                }
+            };
+            
+            if let Some(channel_id) = announce_channel {
+                println!("chacking birthdays in guild {}", guild);
+                match todays_birthdays(&ctx, (*guild).into()).await {
+                    Err(err) => {
+                        println!("got error {:?} when checking birthdays for {}", err, guild);
+                    },
+                    Ok(msg) => {
+                        if announce_when_none.unwrap_or_default() || !msg.contains("None") {
+                            // Birthday announcement happens today
+                            if let Err(err) = channel_id.say(&ctx.http, msg).await {
+                                println!("got error {:?} when sending birthday alert for {}", err, guild);
+                            }
+                        }
+                    },
+                }
+            }
+        }
+
+        // check every day at 8 am local time (where bot is run)
+        let next = Local::today().and_hms(8, 0, 0) + Duration::days(1);
+
+        // wait until next check
+        tokio::time::sleep((next - Local::now()).to_std().unwrap()).await;
+    }
 }

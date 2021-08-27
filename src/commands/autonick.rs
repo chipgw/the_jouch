@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{collections::HashSet,time::Duration};
 use serenity::framework::standard::{macros::command, Args, CommandResult};
 use serenity::model::prelude::*;
 use serenity::prelude::*;
@@ -18,12 +18,12 @@ async fn set_nick(ctx: &Context, msg: &Message, nick: Option<String>) -> Command
         guild: msg.guild_id.ok_or("Unable to get guild where command was sent")?,
     };
 
-    db.update(key.clone(), |data| { 
+    db.update(&key, |data| { 
         data.auto_nick = nick.clone()
     })?;
 
     // update immediately
-    check_nick_user(ctx, key, db).await?;
+    check_nick_user(ctx, &key, db).await?;
 
     Ok(MessageBuilder::new()
         .push("Set nickname to ")
@@ -35,7 +35,7 @@ async fn set_nick(ctx: &Context, msg: &Message, nick: Option<String>) -> Command
 }
 
 // function to be spun off into its own thread to periodically check for nickname updates
-pub async fn check_nicks_loop(ctx: Context, guilds: Vec<GuildId>) {
+pub async fn check_nicks_loop(ctx: Context) {
     // get the update interval from the config file if possible
     let interval = {
         let data = ctx.data.read().await;
@@ -48,6 +48,15 @@ pub async fn check_nicks_loop(ctx: Context, guilds: Vec<GuildId>) {
     };
     
     loop {
+        let guilds = {
+            let data = ctx.data.read().await;
+            if let Some(db) = data.get::<Db>() {
+                db.get_guilds().unwrap_or_default()
+            } else {
+                println!("error getting database");
+                HashSet::new()
+            }
+        };
         for guild in &guilds {
             println!("Updating nicknames in guild {}", guild);
             if let Err(e) = check_nicks_in_guild(&ctx, *guild).await {
@@ -67,21 +76,17 @@ async fn check_nicks_in_guild(ctx: &Context, guild: GuildId) -> CommandResult {
     let users = db.get_users(guild)?;
 
     for user in users {
-        let key = UserKey {
-            user: user.into(), 
-            guild: guild,
-        };
-        if let Err(e) = check_nick_user(ctx, key, db).await {
+        if let Err(e) = check_nick_user(ctx, &user, db).await {
             // Don't pass the error up the chain, instead print and move on to the next user in the guild.
-            println!("Error updating nick for user {}, {:?}\ncontinuing...", user, e);
+            println!("Error updating nick for user {:?}, {:?}\ncontinuing...", user, e);
         }
     }
     
     Ok(())
 }
 
-async fn check_nick_user(ctx: &Context, user_key: UserKey, db: &Db) -> CommandResult {
-    let nick = db.read(user_key.clone(), |data| {
+async fn check_nick_user(ctx: &Context, user_key: &UserKey, db: &Db) -> CommandResult {
+    let nick = db.read(&user_key, |data| {
         data.auto_nick.clone()
     })?.ok_or("error getting user")?;
 

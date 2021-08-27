@@ -24,9 +24,10 @@ impl EventHandler for Handler {
     async fn ready(&self, _: Context, ready: Ready) {
         println!("{} is connected!", ready.user.name);
     }
-    async fn cache_ready(&self, ctx: Context, guilds: Vec<GuildId>) {
-        // Spawn the nickname checker.
-        tokio::spawn(check_nicks_loop(ctx, guilds));
+    async fn cache_ready(&self, ctx: Context, _guilds: Vec<GuildId>) {
+        // Spawn the nickname & birthday checkers.
+        tokio::spawn(check_nicks_loop(ctx.clone()));
+        tokio::spawn(check_birthdays_loop(ctx.clone()));
     }
 }
 

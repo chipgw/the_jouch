@@ -3,15 +3,14 @@ use chrono::{DateTime, FixedOffset};
 use rustbreak::{deser::Ron, PathDatabase, error};
 use serenity::framework::standard::CommandResult;
 use serenity::prelude::TypeMapKey;
-use serenity::model::id::{UserId,GuildId};
+use serenity::model::id::{UserId,GuildId,ChannelId};
 use serde::{Serialize, Deserialize};
 
 use crate::commands::birthday::BirthdayPrivacy;
 
 type DbType = PathDatabase<HashMap<u64, GuildData>, Ron>;
 
-// Would have made a struct but it won't work with the database/serialization of HashMap
-#[derive(Eq, PartialEq, Debug, Serialize, Deserialize, Clone, Default)]
+#[derive(Eq, PartialEq, Debug, Serialize, Deserialize, Clone, Default, Hash)]
 pub struct UserKey {
     pub user: UserId,
     pub guild: GuildId,
@@ -28,7 +27,7 @@ impl Db {
         })
     }
 
-    pub fn update<T, R>(&mut self, user_key: UserKey, task: T) -> error::Result<R> 
+    pub fn update<T, R>(&mut self, user_key: &UserKey, task: T) -> error::Result<R> 
     where 
         T: FnOnce(&mut UserData) -> R
     {
@@ -41,7 +40,19 @@ impl Db {
         Ok(r)
     }
 
-    pub fn read<T, R>(&self, user_key: UserKey, task: T) -> error::Result<Option<R>> 
+    pub fn read_guild<T, R>(&self, guild: GuildId, task: T) -> error::Result<Option<R>> 
+    where 
+        T: FnOnce(&GuildData) -> R
+    {
+        Ok(self.db.read(|db| { 
+            if let Some(guild_entry) = db.get(&guild.into()) {
+                return Some(task(guild_entry));
+            }
+            return None;
+        })?)
+    }
+
+    pub fn read<T, R>(&self, user_key: &UserKey, task: T) -> error::Result<Option<R>> 
     where 
         T: FnOnce(&UserData) -> R
     {
@@ -55,11 +66,22 @@ impl Db {
         })?)
     }
 
-    pub fn get_users(&self, guild: GuildId) -> CommandResult<HashSet<u64>> {
+    pub fn get_users(&self, guild: GuildId) -> CommandResult<HashSet<UserKey>> {
         self.db.read(|db| {
             let guild_entry = db.get(&guild.into()).ok_or("Unable to find guild in database")?;
             
-            Ok(guild_entry.users.keys().cloned().collect())
+            Ok(guild_entry.users.keys().map(|u|{
+                UserKey {
+                    user: (*u).into(), 
+                    guild,
+                }
+            }).collect())
+        })?
+    }
+
+    pub fn get_guilds(&self) -> CommandResult<HashSet<GuildId>> {
+        self.db.read(|db| {
+            Ok(db.keys().map(|g|{(*g).into()}).collect())
         })?
     }
 
@@ -91,4 +113,6 @@ pub struct UserData {
 #[derive(Eq, PartialEq, Debug, Serialize, Deserialize, Clone, Default)]
 pub struct GuildData {
     pub users: HashMap<u64,UserData>,
+    pub birthday_announce_channel: Option<ChannelId>,
+    pub birthday_announce_when_none: Option<bool>,
 }
