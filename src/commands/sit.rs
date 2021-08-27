@@ -64,14 +64,16 @@ async fn sit_check(ctx: &Context, msg: &Message) -> CommandResult {
     let data = ctx.data.read().await;
     let db = data.get::<Db>().ok_or("Unable to get database")?;
 
-    let mut sit_data: Vec<(User, u64)> = Vec::new();
+    let mut sit_data: Vec<(String, u64)> = Vec::new();
 
     let title = if msg.mentions.is_empty() {
         let users = db.get_users(guild)?;
 
         for user_key in &users {
             if let Some(count) = db.read(user_key, |data|{ data.sit_count })?.unwrap_or_default() {
-                sit_data.push((user_key.user.to_user(ctx).await?, count));
+                let user = user_key.user.to_user(ctx).await?;
+                let name = user.nick_in(ctx, guild).await.unwrap_or(user.name);
+                sit_data.push((name, count));
             }
         };
         sit_data.sort_unstable_by(|a, b|{ b.1.cmp(&a.1) });
@@ -84,9 +86,11 @@ async fn sit_check(ctx: &Context, msg: &Message) -> CommandResult {
                 user: user.id,
                 guild,
             };
-            db.read(&key, |data| {
-                sit_data.push((user.clone(), data.sit_count.unwrap_or_default()));
+            let name = user.nick_in(ctx, guild).await.unwrap_or(user.name.clone());
+            let count = db.read(&key, |data| {
+                data.sit_count.unwrap_or_default()
             })?;
+            sit_data.push((name, count.unwrap_or_default()));
         }
         "Sit Data For Users"
     };
@@ -94,12 +98,12 @@ async fn sit_check(ctx: &Context, msg: &Message) -> CommandResult {
     msg.channel_id.send_message(&ctx.http, |m| {
         m.embed(|e| {
             for (user, count) in sit_data {
-                e.field(user.name, format!("Times on The Jouch: {}", count), false);
+                e.field(user, format!("Times on The Jouch: {}", count), false);
             }
             e.title(title)
         });
 
-        m
+        m.reference_message(msg)
     }).await?;
 
     Ok(())
