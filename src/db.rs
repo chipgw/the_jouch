@@ -108,6 +108,7 @@ pub struct UserData {
     pub birthday: Option<DateTime<FixedOffset>>,
     pub birthday_privacy: Option<BirthdayPrivacy>,
     pub auto_nick: Option<String>,
+    pub sit_count: Option<u64>,
 }
 
 #[derive(Eq, PartialEq, Debug, Serialize, Deserialize, Clone, Default)]

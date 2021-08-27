@@ -2,6 +2,7 @@ use image::{GenericImage,GenericImageView,DynamicImage,ImageResult,error,imageop
 use serenity::framework::standard::{macros::command, Args, CommandResult};
 use serenity::model::prelude::*;
 use serenity::prelude::*;
+use crate::db::{Db, UserKey};
 
 const SIT_ONE: (u32, u32) = (385, 64);
 const SIT_WITH: (u32, u32, u32, u32) = (240, 64, 580, 64);
@@ -44,29 +45,70 @@ fn blend_circle(target: &mut DynamicImage, source: &DynamicImage, x: u32, y: u32
     Ok(())
 }
 
-#[command]
-pub async fn sit(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
-    let with = if args.is_empty() {
-        false
-    } else {
-        let arg = args.single::<String>()?;
-        if arg.to_lowercase() == "with" {
-            if msg.mentions.len() != 1 {
-                return Err(if msg.mentions.is_empty() {
-                    "No one to sit with!"
-                } else {
-                    "Can only `sit with` one person!"
-                }.into());
-            }
-            true
-        } else {
-            return Err(format!("Unknown option {}", arg).into());
-        }
+pub fn increment_sit_counter(db: &mut Db, user: &User, guild: GuildId) -> CommandResult {
+    let key = UserKey {
+        user: user.id,
+        guild,
     };
 
+    db.update(&key, |data| { 
+        data.sit_count = Some(data.sit_count.unwrap_or_default() + 1);
+    })?;
+
+    Ok(())
+}
+
+async fn sit_check(ctx: &Context, msg: &Message) -> CommandResult {
+    let guild = msg.guild_id.ok_or("Unable to get guild where command was sent")?;
+
+    let data = ctx.data.read().await;
+    let db = data.get::<Db>().ok_or("Unable to get database")?;
+
+    let mut sit_data: Vec<(User, u64)> = Vec::new();
+
+    let title = if msg.mentions.is_empty() {
+        let users = db.get_users(guild)?;
+
+        for user_key in &users {
+            if let Some(count) = db.read(user_key, |data|{ data.sit_count })?.unwrap_or_default() {
+                sit_data.push((user_key.user.to_user(ctx).await?, count));
+            }
+        };
+        sit_data.sort_unstable_by(|a, b|{ b.1.cmp(&a.1) });
+        sit_data.truncate(10);
+
+        "Sit Leaderboard"
+    } else {
+        for user in &msg.mentions {
+            let key = UserKey {
+                user: user.id,
+                guild,
+            };
+            db.read(&key, |data| {
+                sit_data.push((user.clone(), data.sit_count.unwrap_or_default()));
+            })?;
+        }
+        "Sit Data For Users"
+    };
+
+    msg.channel_id.send_message(&ctx.http, |m| {
+        m.embed(|e| {
+            for (user, count) in sit_data {
+                e.field(user.name, format!("Times on The Jouch: {}", count), false);
+            }
+            e.title(title)
+        });
+
+        m
+    }).await?;
+
+    Ok(())
+}
+
+async fn sit_internal(ctx: &Context, msg: &Message, with: Option<&User>) -> CommandResult {
     let typing = msg.channel_id.start_typing(&ctx.http)?;
 
-    let base_image_path = if with {
+    let base_image_path = if with.is_some() {
         "assets/jouch-0002.png"
     } else {
         "assets/jouch-0001.png"
@@ -76,8 +118,8 @@ pub async fn sit(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult 
 
     let author_avatar = get_face(&msg.author).await?;
 
-    if with {
-        let with_avatar = get_face(&msg.mentions[0]).await?;
+    if let Some(user) = with {
+        let with_avatar = get_face(user).await?;
 
         blend_circle(&mut base_image, &author_avatar, SIT_WITH.0, SIT_WITH.1)?;
         blend_circle(&mut base_image, &with_avatar, SIT_WITH.2, SIT_WITH.3)?;
@@ -95,5 +137,41 @@ pub async fn sit(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult 
 
     typing.stop();
 
+    let mut data = ctx.data.write().await;
+    let db = data.get_mut::<Db>().ok_or("Unable to get database")?;
+    let guild = msg.guild_id.ok_or("Unable to get guild where command was sent")?;
+    increment_sit_counter(db, &msg.author, guild)?;
+    if let Some(user) = with {
+        increment_sit_counter(db, user, guild)?;
+    }
+
     Ok(())
+}
+
+#[command]
+pub async fn sit(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
+    if args.is_empty() {
+        sit_internal(ctx, msg, None).await
+    } else {
+        let arg = args.single::<String>()?;
+        match arg.to_lowercase().as_str() {
+            "with" => {
+                if msg.mentions.len() != 1 {
+                    Err(if msg.mentions.is_empty() {
+                        "No one to sit with!"
+                    } else {
+                        "Can only `sit with` one person!"
+                    }.into())
+                } else {
+                    sit_internal(ctx, msg, Some(&msg.mentions[0])).await
+                }
+            },
+            "count" | "check" => {
+                sit_check(ctx, msg).await
+            }
+            _ => {
+                Err(format!("Unknown option {}", arg).into())
+            }
+        }
+    }
 }
