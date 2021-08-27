@@ -251,7 +251,7 @@ pub async fn check_birthdays_loop(ctx: Context) {
                     Ok(msg) => {
                         if announce_when_none.unwrap_or_default() || !msg.contains("None") {
                             // Birthday announcement happens today
-                            if let Err(err) = channel_id.say(&ctx.http, msg).await {
+                            if let Err(err) = ChannelId(channel_id).say(&ctx.http, msg).await {
                                 println!("got error {:?} when sending birthday alert for {}", err, guild);
                             }
                         }

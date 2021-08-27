@@ -3,7 +3,7 @@ use chrono::{DateTime, FixedOffset};
 use rustbreak::{deser::Ron, PathDatabase, error};
 use serenity::framework::standard::CommandResult;
 use serenity::prelude::TypeMapKey;
-use serenity::model::id::{UserId,GuildId,ChannelId};
+use serenity::model::id::{UserId,GuildId};
 use serde::{Serialize, Deserialize};
 
 use crate::commands::birthday::BirthdayPrivacy;
@@ -113,6 +113,6 @@ pub struct UserData {
 #[derive(Eq, PartialEq, Debug, Serialize, Deserialize, Clone, Default)]
 pub struct GuildData {
     pub users: HashMap<u64,UserData>,
-    pub birthday_announce_channel: Option<ChannelId>,
+    pub birthday_announce_channel: Option<u64>,
     pub birthday_announce_when_none: Option<bool>,
 }
