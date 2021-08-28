@@ -8,6 +8,7 @@ use crate::db::{Db, UserKey};
 
 // how many seconds between nickname update checks?
 pub const DEFAULT_INTERVAL: u64 = 600;
+pub const fn default_interval() -> u64 { DEFAULT_INTERVAL }
 
 async fn set_nick(ctx: &Context, msg: &Message, nick: Option<String>) -> CommandResult<String> {
     let mut data = ctx.data.write().await;
@@ -40,7 +41,7 @@ pub async fn check_nicks_loop(ctx: Context) {
     let interval = {
         let data = ctx.data.read().await;
         if let Some(config) = data.get::<Config>() {
-            config.nick_interval.unwrap_or(DEFAULT_INTERVAL)
+            config.nick_interval
         } else {
             // we really should always be able to get the config, but just in case fallback to default.
             DEFAULT_INTERVAL

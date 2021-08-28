@@ -6,9 +6,10 @@ use serenity::prelude::TypeMapKey;
 use serenity::model::id::{UserId,GuildId};
 use serde::{Serialize, Deserialize};
 
-use crate::commands::birthday::BirthdayPrivacy;
+use crate::{commands::birthday::BirthdayPrivacy,canned_responses::ResponseTable};
 
-type DbType = PathDatabase<HashMap<u64, GuildData>, Ron>;
+type DbData = HashMap<u64, GuildData>;
+type DbType = PathDatabase<DbData, Ron>;
 
 #[derive(Eq, PartialEq, Debug, Serialize, Deserialize, Clone, Default, Hash)]
 pub struct UserKey {
@@ -105,15 +106,23 @@ impl TypeMapKey for Db {
 
 #[derive(Eq, PartialEq, Debug, Serialize, Deserialize, Clone, Default)]
 pub struct UserData {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub birthday: Option<DateTime<FixedOffset>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub birthday_privacy: Option<BirthdayPrivacy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_nick: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sit_count: Option<u64>,
 }
 
-#[derive(Eq, PartialEq, Debug, Serialize, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct GuildData {
     pub users: HashMap<u64,UserData>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub birthday_announce_channel: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub birthday_announce_when_none: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub canned_response_table: Option<ResponseTable>,
 }

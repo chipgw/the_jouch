@@ -3,11 +3,16 @@ use std::{fs::File, io::{Error,ErrorKind}, path::Path};
 use serde::{Serialize,Deserialize};
 use serenity::prelude::TypeMapKey;
 
+use crate::canned_responses::ResponseTable;
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
     pub token: String,
     pub prefix: String,
-    pub nick_interval: Option<u64>,
+    #[serde(default = "crate::commands::autonick::default_interval")]
+    pub nick_interval: u64,
+    #[serde(default)]
+    pub canned_response_table: ResponseTable,
 }
 
 const CONFIG_PATH: &str = "config.ron";
@@ -19,11 +24,7 @@ impl Config {
             let config: Config = from_reader(f).map_err(|e| {Error::new(ErrorKind::Other, e)})?;
             Ok(config)
         } else {
-            Ok(Config {
-                token: String::new(),
-                prefix: "~".into(),
-                nick_interval: Some(crate::commands::autonick::DEFAULT_INTERVAL),
-            })
+            Ok(Default::default())
         }
     }
 
@@ -33,6 +34,16 @@ impl Config {
         to_writer(f, &self).map_err(|e| {Error::new(ErrorKind::Other, e)})?;
 
         Ok(())
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            prefix: "~".into(),
+            nick_interval: crate::commands::autonick::DEFAULT_INTERVAL,
+            ..Default::default()
+        }
     }
 }
 

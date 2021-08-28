@@ -1,3 +1,4 @@
+mod canned_responses;
 mod commands;
 mod db;
 mod config;
@@ -37,6 +38,11 @@ async fn main() {
     // make sure config file is created.
     config.save().expect("Unable to save config file!");
 
+    if config.token.is_empty() {
+        println!("Please fill out token & app id in config.ron");
+        return;
+    }
+
     let http = Http::new_with_token(&config.token);
 
     // We will fetch your bot's owners and id
@@ -52,7 +58,7 @@ async fn main() {
                 Ok(bot_id) => (owners, bot_id.id),
                 Err(why) => panic!("Could not access the bot id: {:?}", why),
             }
-        },
+        }
         Err(why) => panic!("Could not access application info: {:?}", why),
     };
 
@@ -66,7 +72,7 @@ async fn main() {
         .before(before)
         .after(after)
         .unrecognised_command(unknown_command)
-        .normal_message(normal_message);
+        .normal_message(canned_responses::process);
 
     // Login with a bot token from the configuration file
     let mut client = Client::builder(config.token.as_str())
@@ -135,9 +141,4 @@ async fn after(ctx: &Context, msg: &Message, command_name: &str, command_result:
 #[hook]
 async fn unknown_command(_ctx: &Context, _msg: &Message, unknown_command_name: &str) {
     println!("Could not find command named '{}'", unknown_command_name);
-}
-
-#[hook]
-async fn normal_message(_ctx: &Context, _msg: &Message) {
-    // TODO - respond to messages based on certain words
 }
