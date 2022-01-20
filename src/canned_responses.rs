@@ -13,7 +13,7 @@ pub enum Response {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ResponseData {
     pub triggers: Vec<String>,
-    pub response: Response,
+    pub responses: Vec<Response>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -26,7 +26,7 @@ impl ResponseTable {
         let mut responses = Vec::new();
         for data in &self.map {
             if data.triggers.iter().any(|a| message.contains(a)) {
-                responses.push(data.response.clone());
+                responses.extend_from_slice(&data.responses);
             }
         }
         responses
@@ -84,7 +84,7 @@ impl Default for ResponseTable {
         Self { map: vec![
             ResponseData {
                 triggers: vec!["heresy".into(), "heretic".into(), "heretical".into()],
-                response: Response::Reply("Heresy has no place on The Jouch".into()),
+                responses: vec![Response::Reply("Heresy has no place on The Jouch".into())],
             },
         ] }
     }
