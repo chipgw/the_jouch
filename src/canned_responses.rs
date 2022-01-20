@@ -83,7 +83,7 @@ impl Default for ResponseTable {
     fn default() -> Self {
         Self { map: vec![
             ResponseData {
-                triggers: vec!["heresy".into(), "heretic".into(), "heretical".into()],
+                triggers: vec!["heresy".into(), "heretic".into(), "heresies".into()],
                 responses: vec![Response::Reply("Heresy has no place on The Jouch".into())],
             },
         ] }
