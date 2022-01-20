@@ -3,9 +3,11 @@ use serenity::framework::standard::{macros::command, Args, CommandResult};
 use serenity::model::prelude::*;
 use serenity::prelude::*;
 use crate::db::{Db, UserKey};
+use super::birthday::is_birthday_today;
 
 const SIT_ONE: (u32, u32) = (385, 64);
 const SIT_WITH: (u32, u32, u32, u32) = (240, 64, 580, 64);
+const HAT_OFFSET: (u32, u32) = (48, 64);
 
 async fn get_face(user: &User) -> CommandResult<DynamicImage> {
     let buffer = reqwest::get(user.face()).await?.bytes().await?;
@@ -18,7 +20,7 @@ async fn get_face(user: &User) -> CommandResult<DynamicImage> {
 }
 
 // basically stolen from copy_from, but with blending the source & target pixels rather than replacement & limiting to a circle.
-fn blend_circle(target: &mut DynamicImage, source: &DynamicImage, x: u32, y: u32) -> ImageResult<()> {
+fn blend(target: &mut DynamicImage, source: &DynamicImage, x: u32, y: u32, circle: bool) -> ImageResult<()> {
     // Do bounds checking here so we can use the non-bounds-checking
     // functions to copy pixels.
     if target.width() < source.width() + x || target.height() < source.height() + y {
@@ -35,7 +37,7 @@ fn blend_circle(target: &mut DynamicImage, source: &DynamicImage, x: u32, y: u32
             let coord = (i as f32 - source_ctr, k as f32 - source_ctr);
             // Limit to circle since that's how Discord shows profile pictures
             // TODO - could try to do some kind of anti-aliasing to this...
-            if (coord.0 * coord.0 + coord.1 * coord.1) < r_squared {
+            if !circle || (coord.0 * coord.0 + coord.1 * coord.1) < r_squared {
                 let mut out_pixel = target.get_pixel(i + x, k + y);
                 out_pixel.blend(&source.get_pixel(i, k));
                 target.put_pixel(i + x, k + y, out_pixel);
@@ -120,15 +122,32 @@ async fn sit_internal(ctx: &Context, msg: &Message, with: Option<&User>) -> Comm
 
     let mut base_image = image::io::Reader::open(base_image_path)?.decode()?;
 
+    let party_hat_image = image::io::Reader::open("assets/party-hat-0001.png")?.decode()?;
+
     let author_avatar = get_face(&msg.author).await?;
 
     if let Some(user) = with {
         let with_avatar = get_face(user).await?;
 
-        blend_circle(&mut base_image, &author_avatar, SIT_WITH.0, SIT_WITH.1)?;
-        blend_circle(&mut base_image, &with_avatar, SIT_WITH.2, SIT_WITH.3)?;
+        blend(&mut base_image, &author_avatar, SIT_WITH.0, SIT_WITH.1, true)?;
+        blend(&mut base_image, &with_avatar, SIT_WITH.2, SIT_WITH.3, true)?;
+
+        if let Some(guild) = msg.guild_id {
+            if is_birthday_today(ctx, UserKey { user: msg.author.id, guild }).await? {
+                blend(&mut base_image, &party_hat_image, SIT_WITH.0 + HAT_OFFSET.0, SIT_WITH.1 - HAT_OFFSET.1, false)?;
+            }
+            if is_birthday_today(ctx, UserKey { user: user.id, guild }).await? {
+                blend(&mut base_image, &party_hat_image, SIT_WITH.2 + HAT_OFFSET.0, SIT_WITH.3 - HAT_OFFSET.1, false)?;
+            }
+        }
     } else {
-        blend_circle(&mut base_image, &author_avatar, SIT_ONE.0, SIT_ONE.1)?;
+        blend(&mut base_image, &author_avatar, SIT_ONE.0, SIT_ONE.1, true)?;
+        
+        if let Some(guild) = msg.guild_id {
+            if is_birthday_today(ctx, UserKey { user: msg.author.id, guild }).await? {
+                blend(&mut base_image, &party_hat_image, SIT_ONE.0 + HAT_OFFSET.0, SIT_ONE.1 - HAT_OFFSET.1, false)?;
+            }
+        }
     }
 
     let mut image_bytes: Vec<u8> = vec![];
@@ -166,6 +185,8 @@ pub async fn sit(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult 
                     } else {
                         "Can only `sit with` one person!"
                     }.into())
+                } else if msg.mentions[0].id == msg.author.id {
+                    Err("Can't sit with yourself!".into())
                 } else {
                     sit_internal(ctx, msg, Some(&msg.mentions[0])).await
                 }

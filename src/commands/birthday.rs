@@ -6,7 +6,7 @@ use serenity::utils::MessageBuilder;
 use chrono::{Duration, prelude::*};
 use serde::{Serialize, Deserialize};
 use enum_utils::FromStr;
-use crate::db::{Db, UserKey};
+use crate::db::{Db, UserKey, UserData};
 
 const DATE_OPTIONS: &[&str] = &[
     "%F",           // e.g. 1990-01-01
@@ -105,20 +105,39 @@ pub async fn set_birthday(ctx: &Context, msg: &Message, mut args: Args) -> Comma
         .build())
 }
 
+fn birthday_date_check(day: Date<Local>, user_data: &UserData) -> bool {
+    if let Some(birthday) = user_data.birthday {
+        day.day() == birthday.day() && day.month() == birthday.month() && user_data.birthday_privacy != Some(BirthdayPrivacy::Private)
+    } else {
+        false
+    }
+}
+
+pub async fn is_birthday_today(ctx: &Context, user_key: UserKey) -> CommandResult<bool> {
+    let now = Local::today();
+    if user_key.user == ctx.cache.current_user_id().await {
+        let bot_birthday = get_bot_birthday();
+        return Ok(now.day() == bot_birthday.day() && now.month() == bot_birthday.month());
+    }
+    let data = ctx.data.read().await;
+    let db = data.get::<Db>().ok_or("Unable to get database")?;
+    Ok(db.read(&user_key, |user_data|{
+        birthday_date_check(now, user_data)
+    })?.unwrap_or_default())
+}
+
 pub async fn todays_birthdays(ctx: &Context, guild: GuildId) -> CommandResult<String> {
     let mut message = MessageBuilder::new();
     message.push("Birthdays today: ");
     let mut birthday_count = 0;
 
-    let mut data = ctx.data.write().await;
-    let db = data.get_mut::<Db>().ok_or("Unable to get database")?;
+    let data = ctx.data.read().await;
+    let db = data.get::<Db>().ok_or("Unable to get database")?;
     let now = Local::today();
     db.foreach(guild, |user_id,user_data|{
-        if let Some(birthday) = user_data.birthday {
-            if now.day() == birthday.day() && now.month() == birthday.month() && user_data.birthday_privacy != Some(BirthdayPrivacy::Private) {
-                message.mention(&UserId(*user_id));
-                birthday_count += 1;
-            }
+        if birthday_date_check(now, user_data) {
+            message.mention(&UserId(*user_id));
+            birthday_count += 1;
         }
     })?;
     let bot_birthday = get_bot_birthday();
@@ -155,8 +174,8 @@ pub async fn user_birthdays(ctx: &Context, msg: &Message) -> CommandResult<Strin
             guild: msg.guild_id.ok_or("Unable to get guild where command was sent")?,
         };
 
-        let mut data = ctx.data.write().await;
-        let db = data.get_mut::<Db>().ok_or("Unable to get database")?;
+        let data = ctx.data.read().await;
+        let db = data.get::<Db>().ok_or("Unable to get database")?;
         db.read(&key, |user_data|{
             match user_data.birthday {
                 Some(birthday) => {
