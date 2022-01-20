@@ -53,13 +53,13 @@ async fn process_internal(ctx: &Context, msg: &Message) -> CommandResult {
     let db = data.get::<Db>().ok_or("Unable to get database")?;
     let config = data.get::<Config>().ok_or("Unable to get config")?;
 
+    let message_lower = msg.content.to_lowercase();
+
     if let Some(guild) = msg.guild_id {
         let result = db.read_guild(guild, |guild| {
-            if let Some(table) = &guild.canned_response_table {
-                Some(table.process(&msg.content))
-            } else {
-                None
-            }
+            guild.canned_response_table.as_ref().map(|table|{
+                table.process(&message_lower)
+            })
         })?.unwrap_or_default();
 
         if let Some(responses) = result {
@@ -68,7 +68,7 @@ async fn process_internal(ctx: &Context, msg: &Message) -> CommandResult {
     }
 
     // if we reached this point the guild didn't have a response table so we use the bot's default table
-    handle_responses(config.canned_response_table.process(&msg.content), ctx, msg).await
+    handle_responses(config.canned_response_table.process(&message_lower), ctx, msg).await
 }
 
 
