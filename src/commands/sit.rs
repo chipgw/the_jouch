@@ -185,8 +185,6 @@ pub async fn sit(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult 
                     } else {
                         "Can only `sit with` one person!"
                     }.into())
-                } else if msg.mentions[0].id == msg.author.id {
-                    Err("Can't sit with yourself!".into())
                 } else {
                     sit_internal(ctx, msg, Some(&msg.mentions[0])).await
                 }
