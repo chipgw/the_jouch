@@ -84,7 +84,7 @@ impl Default for ResponseTable {
         Self { map: vec![
             ResponseData {
                 triggers: vec!["heresy".into(), "heretic".into(), "heresies".into()],
-                responses: vec![Response::Reply("Heresy has no place on The Jouch".into())],
+                responses: vec![Response::Reply("Heresy has no place on The Jouch".into()), Response::Reaction("<:bythepope:881212318707482674>".into())],
             },
         ] }
     }

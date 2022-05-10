@@ -1,5 +1,7 @@
 use std::collections::HashSet;
+use std::str::FromStr;
 use serenity::framework::standard::{macros::command, Args, CommandResult};
+use serenity::model::interactions::application_command::{ApplicationCommandInteraction, ApplicationCommandInteractionDataOptionValue};
 use serenity::model::prelude::*;
 use serenity::prelude::*;
 use serenity::utils::MessageBuilder;
@@ -79,20 +81,13 @@ pub fn parse_date(date_str: &str) -> CommandResult<DateTime<FixedOffset>> {
     Err(format!("Unable to parse date '{}'", date_str).into())
 }
 
-pub async fn set_birthday(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult<String> {
-    let date = parse_date(args.current().ok_or("No date argument passed")?)?;
-    args.advance();
-
-    // TODO - edit or remove original message to maintain privacy if it's set to private
-    let privacy = args.find::<BirthdayPrivacy>().ok();
+pub async fn set_birthday(ctx: &Context, guild: GuildId, user: UserId, date_str: &str, privacy: Option<BirthdayPrivacy>) -> CommandResult<String> {
+    let date = parse_date(date_str)?;
     
     let mut data = ctx.data.write().await;
     let db = data.get_mut::<Db>().ok_or("Unable to get database")?;
 
-    let key = UserKey {
-        user: msg.author.id, 
-        guild: msg.guild_id.ok_or("Unable to get guild where command was sent")?,
-    };
+    let key = UserKey { user, guild };
 
     db.update(&key, |data| { 
         data.birthday = Some(date);
@@ -115,7 +110,7 @@ fn birthday_date_check(day: Date<Local>, user_data: &UserData) -> bool {
 
 pub async fn is_birthday_today(ctx: &Context, user_key: UserKey) -> CommandResult<bool> {
     let now = Local::today();
-    if user_key.user == ctx.cache.current_user_id().await {
+    if user_key.user == ctx.cache.current_user_id() {
         let bot_birthday = get_bot_birthday();
         return Ok(now.day() == bot_birthday.day() && now.month() == bot_birthday.month());
     }
@@ -142,7 +137,7 @@ pub async fn todays_birthdays(ctx: &Context, guild: GuildId) -> CommandResult<St
     })?;
     let bot_birthday = get_bot_birthday();
     if now.day() == bot_birthday.day() && now.month() == bot_birthday.month() {
-        message.mention(&ctx.cache.current_user_id().await);
+        message.mention(&ctx.cache.current_user_id());
         birthday_count += 1;
     }
     if birthday_count == 0 {
@@ -153,13 +148,13 @@ pub async fn todays_birthdays(ctx: &Context, guild: GuildId) -> CommandResult<St
     Ok(message.build())
 }
 
-pub async fn user_birthdays(ctx: &Context, msg: &Message) -> CommandResult<String> {
+pub async fn user_birthdays(ctx: &Context, guild: GuildId, users: &Vec<User>) -> CommandResult<String> {
     let mut message = MessageBuilder::new();
     let now = Local::today();
-    for mention in &msg.mentions {
-        message.mention(mention).push("'s birthday is ");
+    for user in users {
+        message.mention(user).push("'s birthday is ");
 
-        if mention.id == ctx.cache.current_user_id().await {
+        if user.id == ctx.cache.current_user_id() {
             let bot_birthday = get_bot_birthday();
             if now.day() == bot_birthday.day() && now.month() == bot_birthday.month() {
                 message.push_line("today! Happy Birthday!");
@@ -170,8 +165,8 @@ pub async fn user_birthdays(ctx: &Context, msg: &Message) -> CommandResult<Strin
         }
 
         let key = UserKey {
-            user: mention.id, 
-            guild: msg.guild_id.ok_or("Unable to get guild where command was sent")?,
+            user: user.id, 
+            guild,
         };
 
         let data = ctx.data.read().await;
@@ -207,13 +202,21 @@ pub async fn birthday(ctx: &Context, msg: &Message, mut args: Args) -> CommandRe
     
     let response = match subcommand.as_str() {
         "set" => {
-            set_birthday(ctx, msg, args).await?
+            let guild = msg.guild_id.ok_or("Unable to get guild where command was sent")?;
+            let date_str = args.current().ok_or("No date argument passed")?.to_owned();
+            args.advance();
+
+            // TODO - edit or remove original message to maintain privacy if it's set to private
+            let privacy = args.find::<BirthdayPrivacy>().ok();
+
+            set_birthday(ctx, guild, msg.author.id, &date_str, privacy).await?
         },
         "check" => {
+            let guild = msg.guild_id.ok_or("Unable to get guild where command was sent")?;
             if msg.mentions.is_empty() {
-                todays_birthdays(ctx, msg.guild_id.ok_or("Unable to get guild where command was sent")?).await?
+                todays_birthdays(ctx, guild).await?
             } else {
-                user_birthdays(ctx, msg).await?
+                user_birthdays(ctx, guild, &msg.mentions).await?
             }
         },
         _ => {
@@ -284,5 +287,69 @@ pub async fn check_birthdays_loop(ctx: Context) {
 
         // wait until next check
         tokio::time::sleep((next - Local::now()).to_std().unwrap()).await;
+    }
+}
+
+pub async fn birthday_slashcommand(ctx: &Context, command: &ApplicationCommandInteraction) -> CommandResult {
+    if let Some(subcommand) = command.data.options.get(0) {
+        match subcommand.name.as_str() {
+            "set" => {
+                if let Some(date_arg) = subcommand.options.first() {
+                    if let Some(ApplicationCommandInteractionDataOptionValue::String(date_str)) = &date_arg.resolved {
+                        let guild = command.guild_id.ok_or("Unable to get guild where command was sent")?;
+                        
+                        let privacy = subcommand.options.iter().find_map(|x|{
+                            if let Some(ApplicationCommandInteractionDataOptionValue::String(arg_str)) = &x.resolved {
+                                BirthdayPrivacy::from_str(arg_str).ok()
+                            } else {
+                                None
+                            }
+                        });
+
+                        let response = set_birthday(ctx, guild, command.user.id, date_str, privacy).await?;
+
+                        command.create_interaction_response(&ctx.http, |r| {
+                            r.kind(InteractionResponseType::ChannelMessageWithSource)
+                                .interaction_response_data(|f|{
+                                    f.content(response)
+                                })
+                        }).await?;
+
+                        return Ok(())
+                    }
+                }
+                Err("No date argument passed".into())
+            },
+            "check" => {
+                let guild = command.guild_id.ok_or("Unable to get guild where command was sent")?;
+                let users: Vec<User> = subcommand.options.iter().filter_map(|x|{
+                    if let Some(ApplicationCommandInteractionDataOptionValue::User(user, _)) = &x.resolved {
+                        Some(user.clone())
+                    } else {
+                        None
+                    }
+                }).collect();
+
+                let response = if users.is_empty() {
+                    todays_birthdays(ctx, guild).await?
+                } else {
+                    user_birthdays(ctx, guild, &users).await?
+                };
+
+                command.create_interaction_response(&ctx.http, |r| {
+                    r.kind(InteractionResponseType::ChannelMessageWithSource)
+                        .interaction_response_data(|f|{
+                            f.content(response)
+                        })
+                }).await?;
+
+                Ok(())
+            }
+            _ => {
+                Err(format!("Unknown option {}", subcommand.name).into())
+            }
+        }
+    } else {
+        Err("Please provide a valid subcommand".into())
     }
 }

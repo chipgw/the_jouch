@@ -1,5 +1,8 @@
+use std::io::Cursor;
 use image::{GenericImage,GenericImageView,DynamicImage,ImageResult,error,imageops::FilterType,Pixel,ImageOutputFormat};
+use serenity::builder::CreateEmbed;
 use serenity::framework::standard::{macros::command, Args, CommandResult};
+use serenity::model::interactions::application_command::{ApplicationCommandInteraction, ApplicationCommandInteractionDataOptionValue};
 use serenity::model::prelude::*;
 use serenity::prelude::*;
 use crate::db::{Db, UserKey};
@@ -60,60 +63,70 @@ pub fn increment_sit_counter(db: &mut Db, user: &User, guild: GuildId) -> Comman
     Ok(())
 }
 
-async fn sit_check(ctx: &Context, msg: &Message) -> CommandResult {
-    let guild = msg.guild_id.ok_or("Unable to get guild where command was sent")?;
-
+async fn sit_check(ctx: &Context, user: &User, guild: Option<GuildId>, users: &Vec<User>) -> CommandResult<CreateEmbed> {
     let data = ctx.data.read().await;
     let db = data.get::<Db>().ok_or("Unable to get database")?;
 
     let mut sit_data: Vec<(String, u64)> = Vec::new();
 
-    let title = if msg.mentions.is_empty() {
-        let users = db.get_users(guild)?;
+    let title = if let Some(guild) = guild {
+        if users.is_empty() {
+            let users = db.get_users(guild)?;
 
-        for user_key in &users {
-            if let Some(count) = db.read(user_key, |data|{ data.sit_count })?.unwrap_or_default() {
-                let user = user_key.user.to_user(ctx).await?;
-                let name = user.nick_in(ctx, guild).await.unwrap_or(user.name);
+            for user_key in &users {
+                if let Some(count) = db.read(user_key, |data|{ data.sit_count })?.unwrap_or_default() {
+                    let user = user_key.user.to_user(ctx).await?;
+                    let name = user.nick_in(ctx, guild).await.unwrap_or(user.name);
+                    sit_data.push((name, count));
+                }
+            };
+            sit_data.sort_unstable_by(|a, b|{ b.1.cmp(&a.1) });
+            sit_data.truncate(10);
+
+            "Sit Leaderboard"
+        } else {
+            for user in users {
+                let key = UserKey {
+                    user: user.id,
+                    guild,
+                };
+                let name = user.nick_in(ctx, guild).await.unwrap_or(user.name.clone());
+                let count = db.read(&key, |data| {
+                    data.sit_count.unwrap_or_default()
+                })?;
+                sit_data.push((name, count.unwrap_or_default()));
+            }
+            "Sit Data For Users"
+        }
+    } else {
+        let guilds = db.get_guilds()?;
+
+        for guild in guilds {
+            let user_key = UserKey { user: user.id, guild };
+            if let Some(count) = db.read(&user_key, |data|{ data.sit_count })?.unwrap_or_default() {
+                let name = if let Some(name) = guild.name(&ctx.cache) {
+                    name
+                } else {
+                    guild.to_partial_guild(&ctx.http).await?.name
+                };
                 sit_data.push((name, count));
             }
-        };
-        sit_data.sort_unstable_by(|a, b|{ b.1.cmp(&a.1) });
-        sit_data.truncate(10);
-
-        "Sit Leaderboard"
-    } else {
-        for user in &msg.mentions {
-            let key = UserKey {
-                user: user.id,
-                guild,
-            };
-            let name = user.nick_in(ctx, guild).await.unwrap_or(user.name.clone());
-            let count = db.read(&key, |data| {
-                data.sit_count.unwrap_or_default()
-            })?;
-            sit_data.push((name, count.unwrap_or_default()));
         }
-        "Sit Data For Users"
+
+        "Sit data in all servers"
     };
 
-    msg.channel_id.send_message(&ctx.http, |m| {
-        m.embed(|e| {
-            for (user, count) in sit_data {
-                e.field(user, format!("Times on The Jouch: {}", count), false);
-            }
-            e.title(title)
-        });
+    let mut embed = CreateEmbed::default();
 
-        m.reference_message(msg)
-    }).await?;
+    for (user, count) in sit_data {
+        embed.field(user, format!("Times on The Jouch: {}", count), false);
+    }
+    embed.title(title);
 
-    Ok(())
+    Ok(embed)
 }
 
-async fn sit_internal(ctx: &Context, msg: &Message, with: Option<&User>) -> CommandResult {
-    let typing = msg.channel_id.start_typing(&ctx.http)?;
-
+async fn sit_internal(ctx: &Context, user: &User, guild: Option<GuildId>, with: Option<&User>) -> CommandResult<Vec<u8>> {
     let base_image_path = if with.is_some() {
         "assets/jouch-0002.png"
     } else {
@@ -124,77 +137,153 @@ async fn sit_internal(ctx: &Context, msg: &Message, with: Option<&User>) -> Comm
 
     let party_hat_image = image::io::Reader::open("assets/party-hat-0001.png")?.decode()?;
 
-    let author_avatar = get_face(&msg.author).await?;
+    let user_avatar = get_face(user).await?;
 
-    if let Some(user) = with {
-        let with_avatar = get_face(user).await?;
+    if let Some(other) = with {
+        let with_avatar = get_face(other).await?;
 
-        blend(&mut base_image, &author_avatar, SIT_WITH.0, SIT_WITH.1, true)?;
+        blend(&mut base_image, &user_avatar, SIT_WITH.0, SIT_WITH.1, true)?;
         blend(&mut base_image, &with_avatar, SIT_WITH.2, SIT_WITH.3, true)?;
 
-        if let Some(guild) = msg.guild_id {
-            if is_birthday_today(ctx, UserKey { user: msg.author.id, guild }).await? {
+        if let Some(guild) = guild {
+            if is_birthday_today(ctx, UserKey { user: user.id, guild }).await? {
                 blend(&mut base_image, &party_hat_image, SIT_WITH.0 + HAT_OFFSET.0, SIT_WITH.1 - HAT_OFFSET.1, false)?;
             }
-            if is_birthday_today(ctx, UserKey { user: user.id, guild }).await? {
+            if is_birthday_today(ctx, UserKey { user: other.id, guild }).await? {
                 blend(&mut base_image, &party_hat_image, SIT_WITH.2 + HAT_OFFSET.0, SIT_WITH.3 - HAT_OFFSET.1, false)?;
             }
         }
     } else {
-        blend(&mut base_image, &author_avatar, SIT_ONE.0, SIT_ONE.1, true)?;
+        blend(&mut base_image, &user_avatar, SIT_ONE.0, SIT_ONE.1, true)?;
         
-        if let Some(guild) = msg.guild_id {
-            if is_birthday_today(ctx, UserKey { user: msg.author.id, guild }).await? {
+        if let Some(guild) = guild {
+            if is_birthday_today(ctx, UserKey { user: user.id, guild }).await? {
                 blend(&mut base_image, &party_hat_image, SIT_ONE.0 + HAT_OFFSET.0, SIT_ONE.1 - HAT_OFFSET.1, false)?;
             }
         }
     }
 
     let mut image_bytes: Vec<u8> = vec![];
-    base_image.write_to(&mut image_bytes, ImageOutputFormat::Png)?;
-    let files = vec![(&*image_bytes, "jouch.png")];
+    base_image.write_to(&mut Cursor::new(&mut image_bytes), ImageOutputFormat::Png)?;
 
-    msg.channel_id.send_files(&ctx.http, files, |m|{
-        m.reference_message(msg)
-    }).await?;
-
-    typing.stop();
-
-    let mut data = ctx.data.write().await;
-    let db = data.get_mut::<Db>().ok_or("Unable to get database")?;
-    let guild = msg.guild_id.ok_or("Unable to get guild where command was sent")?;
-    increment_sit_counter(db, &msg.author, guild)?;
-    if let Some(user) = with {
+    if let Some(guild) = guild {
+        let mut data = ctx.data.write().await;
+        let db = data.get_mut::<Db>().ok_or("Unable to get database")?;
         increment_sit_counter(db, user, guild)?;
+        if let Some(user) = with {
+            increment_sit_counter(db, user, guild)?;
+        }
     }
 
-    Ok(())
+    Ok(image_bytes)
 }
 
 #[command]
 pub async fn sit(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
+    let typing = msg.channel_id.start_typing(&ctx.http)?;
+
     if args.is_empty() {
-        sit_internal(ctx, msg, None).await
+        let image_bytes = sit_internal(ctx, &msg.author, msg.guild_id, None).await?;
+        let files = vec![(&*image_bytes, "jouch.png")];
+
+        msg.channel_id.send_files(&ctx.http, files, |m|{
+            m.reference_message(msg)
+        }).await?;
     } else {
         let arg = args.single::<String>()?;
         match arg.to_lowercase().as_str() {
             "with" => {
                 if msg.mentions.len() != 1 {
-                    Err(if msg.mentions.is_empty() {
+                    return Err(if msg.mentions.is_empty() {
                         "No one to sit with!"
                     } else {
                         "Can only `sit with` one person!"
                     }.into())
                 } else {
-                    sit_internal(ctx, msg, Some(&msg.mentions[0])).await
+                    let image_bytes = sit_internal(ctx, &msg.author, msg.guild_id, Some(&msg.mentions[0])).await?;
+                    let files = vec![(&*image_bytes, "jouch.png")];
+
+                    msg.channel_id.send_files(&ctx.http, files, |m|{
+                        m.reference_message(msg)
+                    }).await?;
                 }
             },
             "count" | "check" => {
-                sit_check(ctx, msg).await
+                let embed = sit_check(ctx, &msg.author, msg.guild_id, &msg.mentions).await?;
+
+                msg.channel_id.send_message(&ctx.http, |m| {
+                    m.set_embed(embed);
+
+                    m.reference_message(msg)
+                }).await?;
             }
             _ => {
-                Err(format!("Unknown option {}", arg).into())
+                return Err(format!("Unknown option {}", arg).into())
             }
         }
+    };
+
+    let _ignore = typing.stop();
+
+    Ok(())
+}
+
+pub async fn sit_slashcommand(ctx: &Context, command: &ApplicationCommandInteraction) -> CommandResult {
+    if let Some(subcommand) = command.data.options.first() {
+        match subcommand.name.as_str() {
+            "with" => {
+                if let Some(user_arg) = subcommand.options.first() {
+                    if let Some(ApplicationCommandInteractionDataOptionValue::User(user, _)) = &user_arg.resolved {
+                        command.create_interaction_response(&ctx.http, |r| {
+                            r.kind(InteractionResponseType::DeferredChannelMessageWithSource)
+                        }).await?;
+
+                        let image_bytes = sit_internal(ctx, &command.user, command.guild_id, Some(user)).await?;
+
+                        let files = vec![(&*image_bytes, "jouch.png")];
+
+                        // command.channel_id.send_files(&ctx.http, files, |m|{ m }).await?;
+                        command.create_followup_message(&ctx.http, |m| {
+                            m.add_files(files)
+                        }).await?;
+
+                        return Ok(())
+                    }
+                }
+                Err("Please provide a valid user".into())
+            },
+            "solo" => {
+                command.create_interaction_response(&ctx.http, |r| {
+                    r.kind(InteractionResponseType::DeferredChannelMessageWithSource)
+                }).await?;
+
+                let image_bytes = sit_internal(ctx, &command.user, command.guild_id, None).await?;
+                let file = (&*image_bytes, "jouch.png");
+
+                command.create_followup_message(&ctx.http, |m|{
+                    m.add_file(file)
+                }).await?;
+
+                return Ok(())
+            },
+            "count" | "check" => {
+                // TODO - allow passing users
+                let embed = sit_check(ctx, &command.user, command.guild_id, &Vec::new()).await?;
+
+                command.create_interaction_response(&ctx.http, |r| {
+                    r.kind(InteractionResponseType::ChannelMessageWithSource)
+                        .interaction_response_data(|f|{
+                            f.add_embed(embed)
+                        })
+                }).await?;
+
+                Ok(())
+            }
+            _ => {
+                Err(format!("Unknown option {}", subcommand.name).into())
+            }
+        }
+    } else {
+        Err("Please provide a valid subcommand".into())
     }
 }

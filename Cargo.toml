@@ -7,14 +7,14 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-serenity = "0.10"
-tokio = "1.9"
+serenity = "0.11"
+tokio = "1.18"
 mini-redis = "*"
 chrono = { version ="0.4", features = ["serde"] }
 serde = "1.0"
 rustbreak = { version = "2", features = ["ron_enc"] }
 ron = "*"
-image = "0.23"
-webp = { version = "0.1", features = ["img"] }
+image = "0.24"
+webp = { version = "0.2", features = ["img"] }
 reqwest = "*"
 enum-utils = "0.1"

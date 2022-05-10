@@ -8,11 +8,14 @@ use crate::canned_responses::ResponseTable;
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
     pub token: String,
+    pub app_id: u64,
     pub prefix: String,
     #[serde(default = "crate::commands::autonick::default_interval")]
     pub nick_interval: u64,
     #[serde(default)]
     pub canned_response_table: ResponseTable,
+    #[serde(default)]
+    pub testing_guild_id: Option<u64>,
 }
 
 const CONFIG_PATH: &str = "config.ron";
