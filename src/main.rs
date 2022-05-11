@@ -15,7 +15,7 @@ use serenity::{async_trait, client::{Client, Context, EventHandler}, framework::
         interactions::{
             application_command::{
                 ApplicationCommand,
-                ApplicationCommandOptionType, ApplicationCommandType,
+                ApplicationCommandOptionType, ApplicationCommandType, ApplicationCommandInteraction,
             },
             Interaction,
             InteractionResponseType,
@@ -30,104 +30,117 @@ struct General;
 
 struct Handler;
 
-fn create_commands(commands: &mut CreateApplicationCommands) -> &mut CreateApplicationCommands {
-    commands
-    .create_application_command(|command| {
-        command.name("sit").description("Sit on The Jouch");
-        // TODO - restore once it's possible to attach images to command responses
-        command.create_option(|option| {
-            option.name("with")
-                .description("sit with another user")
-                .kind(ApplicationCommandOptionType::SubCommand)
-                .create_sub_option(|option|{
-                    option.name("friend")
-                    .description("a friend to sit on The Jouch with")
-                    .kind(ApplicationCommandOptionType::User)
-                    .required(true)
-                })
-        });
-        command.create_option(|option| {
-            option
-                .name("solo")
-                .description("sit by yourself")
-                .kind(ApplicationCommandOptionType::SubCommand)
-        });
-        command.create_option(|option| {
-            option
-                .name("check")
-                .description("check how often users have sat on The Jouch")
-                .kind(ApplicationCommandOptionType::SubCommand)
-                .create_sub_option(|option|{
-                    option.name("user")
-                    .description("a user to check on")
-                    .kind(ApplicationCommandOptionType::User)
-                })
-        });
-        command
-    })
-    .create_application_command(|command| {
-        command.name("birthday").description("Birthday tracking by The Jouch");
-
-        command.create_option(|option| {
-            option
-                .name("set")
-                .description("set your birthday")
-                .kind(ApplicationCommandOptionType::SubCommand)
-                .create_sub_option(|option|{
-                    option
-                        .name("birthday")
-                        .kind(ApplicationCommandOptionType::String)
-                        .description("Birthday date string")
+impl Handler {
+    fn create_commands(commands: &mut CreateApplicationCommands) -> &mut CreateApplicationCommands {
+        commands
+        .create_application_command(|command| {
+            command.name("sit").description("Sit on The Jouch");
+            // TODO - restore once it's possible to attach images to command responses
+            command.create_option(|option| {
+                option.name("with")
+                    .description("sit with another user")
+                    .kind(ApplicationCommandOptionType::SubCommand)
+                    .create_sub_option(|option|{
+                        option.name("friend")
+                        .description("a friend to sit on The Jouch with")
+                        .kind(ApplicationCommandOptionType::User)
                         .required(true)
-                })
-                .create_sub_option(|option|{
-                    option
-                        .name("privacy")
-                        .kind(ApplicationCommandOptionType::String)
-                        .description("Optional birthday privacy setting (defaults to Public)")
-                        .add_string_choice("Public", "PublicFull")
-                        .add_string_choice("Public Month/Day", "PublicDay")
-                        .add_string_choice("Private", "Private")
-                })
-        });
-        command.create_option(|option| {
-            option
-                .name("check")
-                .description("check birthday for user")
-                .kind(ApplicationCommandOptionType::SubCommand)
-                .create_sub_option(|option|{
-                    option.name("user")
-                    .description("a user to check on")
-                    .kind(ApplicationCommandOptionType::User)
-                })
-        });
+                    })
+            });
+            command.create_option(|option| {
+                option
+                    .name("solo")
+                    .description("sit by yourself")
+                    .kind(ApplicationCommandOptionType::SubCommand)
+            });
+            command.create_option(|option| {
+                option
+                    .name("check")
+                    .description("check how often users have sat on The Jouch")
+                    .kind(ApplicationCommandOptionType::SubCommand);
 
-        command
-    })
+                    // allow up to 10 users to check in on.
+                    for i in 0..10 {
+                        option.create_sub_option(|option|{
+                            option.name(format!("user{}", i))
+                            .description("a user to check on")
+                            .kind(ApplicationCommandOptionType::User)
+                        });
+                    }
+
+                    option
+            });
+            command
+        })
+        .create_application_command(|command| {
+            command.name("birthday").description("Birthday tracking by The Jouch");
+
+            command.create_option(|option| {
+                option
+                    .name("set")
+                    .description("set your birthday")
+                    .kind(ApplicationCommandOptionType::SubCommand)
+                    .create_sub_option(|option|{
+                        option
+                            .name("birthday")
+                            .kind(ApplicationCommandOptionType::String)
+                            .description("Birthday date string")
+                            .required(true)
+                    })
+                    .create_sub_option(|option|{
+                        option
+                            .name("privacy")
+                            .kind(ApplicationCommandOptionType::String)
+                            .description("Optional birthday privacy setting (defaults to Public)")
+                            .add_string_choice("Public", "PublicFull")
+                            .add_string_choice("Public Month/Day", "PublicDay")
+                            .add_string_choice("Private", "Private")
+                    })
+            });
+            command.create_option(|option| {
+                option
+                    .name("check")
+                    .description("check birthday for user")
+                    .kind(ApplicationCommandOptionType::SubCommand)
+                    .create_sub_option(|option|{
+                        option.name("user")
+                        .description("a user to check on")
+                        .kind(ApplicationCommandOptionType::User)
+                    })
+            });
+
+            command
+        })
+    }
+
+    async fn handle_app_command(ctx: &Context, command: ApplicationCommandInteraction) -> CommandResult {
+        command.create_interaction_response(&ctx.http, |r| {
+            r.kind(InteractionResponseType::DeferredChannelMessageWithSource)
+        }).await?;
+
+        let content = match command.data.name.as_str() {
+            "sit" => sit_slashcommand(&ctx, &command).await,
+            "birthday" => birthday_slashcommand(&ctx, &command).await,
+            "clear_from" => clear_from_slashcommand(&ctx, &command).await,
+            _ => Err("not implemented :(".into()),
+        };
+
+        if let Err(content) = content {
+            command.edit_original_interaction_response(&ctx.http, |response| {
+                response.content(content)
+            }).await?;
+        }
+
+        Ok(())
+    }
 }
 
 #[async_trait]
 impl EventHandler for Handler {  
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
         if let Interaction::ApplicationCommand(command) = interaction {
-            let content = match command.data.name.as_str() {
-                "sit" => sit_slashcommand(&ctx, &command).await,
-                "birthday" => birthday_slashcommand(&ctx, &command).await,
-                "clear_from" => clear_from_slashcommand(&ctx, &command).await,
-                _ => Err("not implemented :(".into()),
-            };
-
-            if let Err(content) = content {
-                if let Err(why) = command
-                    .create_interaction_response(&ctx.http, |response| {
-                        response
-                            .kind(InteractionResponseType::ChannelMessageWithSource)
-                            .interaction_response_data(|message| message.content(content))
-                    })
-                    .await
-                {
-                    println!("Cannot respond to slash command: {}", why);
-                }
+            if let Err(why) = Handler::handle_app_command(&ctx, command).await {
+                println!("Cannot respond to slash command: {}", why);
             }
         }
     }
@@ -144,7 +157,7 @@ impl EventHandler for Handler {
         let commands = if let Some(guild_id) = testing_guild {
             if let Some(guild) = ctx.cache.guild(guild_id) {
                 guild.set_application_commands(&ctx.http, |commands| {
-                    create_commands(commands);
+                    Handler::create_commands(commands);
 
                     // only available in testing
                     commands.create_application_command(|command| {
@@ -152,10 +165,10 @@ impl EventHandler for Handler {
                     })
                 }).await
             } else {
-                ApplicationCommand::set_global_application_commands(&ctx.http, create_commands).await
+                ApplicationCommand::set_global_application_commands(&ctx.http, Handler::create_commands).await
             }
         } else {
-            ApplicationCommand::set_global_application_commands(&ctx.http, create_commands).await
+            ApplicationCommand::set_global_application_commands(&ctx.http, Handler::create_commands).await
         };
 
         println!("I now have the following slash commands: {:#?}", commands);

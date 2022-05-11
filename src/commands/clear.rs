@@ -28,13 +28,6 @@ pub async fn clear_from_slashcommand(ctx: &Context, command: &ApplicationCommand
     if let Some(ResolvedTarget::Message(ref referenced_msg)) = command.data.target() {
         clear_from_internal(ctx, &referenced_msg).await?;
 
-        command.create_interaction_response(&ctx.http, |r| {
-            r.kind(InteractionResponseType::ChannelMessageWithSource)
-            .interaction_response_data(|d| {
-                d.content("Messages deleted.").ephemeral(true)
-            })
-        }).await?;
-
         Ok(())
     } else {
         Err("Message not a reply to starting message".into())

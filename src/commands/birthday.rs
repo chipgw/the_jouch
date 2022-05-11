@@ -308,11 +308,8 @@ pub async fn birthday_slashcommand(ctx: &Context, command: &ApplicationCommandIn
 
                         let response = set_birthday(ctx, guild, command.user.id, date_str, privacy).await?;
 
-                        command.create_interaction_response(&ctx.http, |r| {
-                            r.kind(InteractionResponseType::ChannelMessageWithSource)
-                                .interaction_response_data(|f|{
-                                    f.content(response)
-                                })
+                        command.edit_original_interaction_response(&ctx.http, |r| {
+                            r.content(response)
                         }).await?;
 
                         return Ok(())
@@ -336,11 +333,8 @@ pub async fn birthday_slashcommand(ctx: &Context, command: &ApplicationCommandIn
                     user_birthdays(ctx, guild, &users).await?
                 };
 
-                command.create_interaction_response(&ctx.http, |r| {
-                    r.kind(InteractionResponseType::ChannelMessageWithSource)
-                        .interaction_response_data(|f|{
-                            f.content(response)
-                        })
+                command.edit_original_interaction_response(&ctx.http, |r| {
+                    r.content(response)
                 }).await?;
 
                 Ok(())

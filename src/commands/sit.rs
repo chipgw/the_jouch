@@ -234,10 +234,6 @@ pub async fn sit_slashcommand(ctx: &Context, command: &ApplicationCommandInterac
             "with" => {
                 if let Some(user_arg) = subcommand.options.first() {
                     if let Some(ApplicationCommandInteractionDataOptionValue::User(user, _)) = &user_arg.resolved {
-                        command.create_interaction_response(&ctx.http, |r| {
-                            r.kind(InteractionResponseType::DeferredChannelMessageWithSource)
-                        }).await?;
-
                         let image_bytes = sit_internal(ctx, &command.user, command.guild_id, Some(user)).await?;
 
                         let files = vec![(&*image_bytes, "jouch.png")];
@@ -253,10 +249,6 @@ pub async fn sit_slashcommand(ctx: &Context, command: &ApplicationCommandInterac
                 Err("Please provide a valid user".into())
             },
             "solo" => {
-                command.create_interaction_response(&ctx.http, |r| {
-                    r.kind(InteractionResponseType::DeferredChannelMessageWithSource)
-                }).await?;
-
                 let image_bytes = sit_internal(ctx, &command.user, command.guild_id, None).await?;
                 let file = (&*image_bytes, "jouch.png");
 
@@ -267,14 +259,17 @@ pub async fn sit_slashcommand(ctx: &Context, command: &ApplicationCommandInterac
                 return Ok(())
             },
             "count" | "check" => {
-                // TODO - allow passing users
-                let embed = sit_check(ctx, &command.user, command.guild_id, &Vec::new()).await?;
+                let mut users = Vec::new();
+                for user_arg in &subcommand.options {
+                    if let Some(ApplicationCommandInteractionDataOptionValue::User(user, _)) = &user_arg.resolved {
+                        users.push(user.to_owned());
+                    }
+                }
 
-                command.create_interaction_response(&ctx.http, |r| {
-                    r.kind(InteractionResponseType::ChannelMessageWithSource)
-                        .interaction_response_data(|f|{
-                            f.add_embed(embed)
-                        })
+                let embed = sit_check(ctx, &command.user, command.guild_id, &users).await?;
+
+                command.edit_original_interaction_response(&ctx.http, |r| {
+                    r.add_embed(embed)
                 }).await?;
 
                 Ok(())
