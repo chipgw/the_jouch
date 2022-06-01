@@ -25,7 +25,7 @@ use serenity::{async_trait, client::{Client, Context, EventHandler}, framework::
 use commands::{autonick::*, birthday::*, clear::*, sit::*};
 
 #[group]
-#[commands(birthday, clear_from, sit, autonick)]
+#[commands(birthday, clear_from, sit)]
 struct General;
 
 struct Handler;
@@ -108,6 +108,37 @@ impl Handler {
                         .kind(ApplicationCommandOptionType::User)
                     })
             });
+            command.create_option(|option| {
+                option
+                    .name("clear")
+                    .description("clear your birthday")
+                    .kind(ApplicationCommandOptionType::SubCommand)
+            });
+
+            command
+        })
+        .create_application_command(|command| {
+            command.name("autonick").description("Automatic nickname updating tracking by The Jouch");
+
+            command.create_option(|option| {
+                option
+                    .name("set")
+                    .description("set your nickname format string")
+                    .kind(ApplicationCommandOptionType::SubCommand)
+                    .create_sub_option(|option|{
+                        option
+                            .name("nickname")
+                            .kind(ApplicationCommandOptionType::String)
+                            .description("format string; %a will be replaced with age and %j with times sat on The Jouch")
+                            .required(true)
+                    })
+            });
+            command.create_option(|option| {
+                option
+                    .name("clear")
+                    .description("clear automatic nickname")
+                    .kind(ApplicationCommandOptionType::SubCommand)
+            });
 
             command
         })
@@ -122,6 +153,7 @@ impl Handler {
             "sit" => sit_slashcommand(&ctx, &command).await,
             "birthday" => birthday_slashcommand(&ctx, &command).await,
             "clear_from" => clear_from_slashcommand(&ctx, &command).await,
+            "autonick" => autonick(&ctx, &command).await,
             _ => Err("not implemented :(".into()),
         };
 
@@ -222,7 +254,7 @@ async fn main() {
         .unrecognised_command(unknown_command)
         .normal_message(canned_responses::process);
 
-    const INTENTS: GatewayIntents = GatewayIntents::non_privileged().union(GatewayIntents::MESSAGE_CONTENT);
+    const INTENTS: GatewayIntents = GatewayIntents::all().difference(GatewayIntents::GUILD_PRESENCES);
 
     // Login with a bot token from the configuration file
     let mut client = Client::builder(config.token.as_str(), INTENTS)

@@ -10,6 +10,8 @@ use serde::{Serialize, Deserialize};
 use enum_utils::FromStr;
 use crate::db::{Db, UserKey, UserData};
 
+use super::autonick::check_nick_user;
+
 const DATE_OPTIONS: &[&str] = &[
     "%F",           // e.g. 1990-01-01
 ];
@@ -81,6 +83,24 @@ pub fn parse_date(date_str: &str) -> CommandResult<DateTime<FixedOffset>> {
     Err(format!("Unable to parse date '{}'", date_str).into())
 }
 
+pub async fn clear_birthday(ctx: &Context, guild: GuildId, user: UserId) -> CommandResult<String> {    
+    let mut data = ctx.data.write().await;
+    let db = data.get_mut::<Db>().ok_or("Unable to get database")?;
+
+    let key = UserKey { user, guild };
+
+    db.update(&key, |data| { 
+        data.birthday = None;
+    })?;
+
+    // try updating the user nickname but ignore if it fails.
+    let _ = check_nick_user(ctx, &key, db).await;
+
+    Ok(MessageBuilder::new()
+        .push("Cleared birthday")
+        .build())
+}
+
 pub async fn set_birthday(ctx: &Context, guild: GuildId, user: UserId, date_str: &str, privacy: Option<BirthdayPrivacy>) -> CommandResult<String> {
     let date = parse_date(date_str)?;
     
@@ -93,6 +113,9 @@ pub async fn set_birthday(ctx: &Context, guild: GuildId, user: UserId, date_str:
         data.birthday = Some(date);
         data.birthday_privacy = privacy;
     })?;
+
+    // try updating the user nickname but ignore if it fails.
+    let _ = check_nick_user(ctx, &key, db).await;
 
     Ok(MessageBuilder::new()
         .push("Set birthday to ")
@@ -200,9 +223,10 @@ pub async fn birthday(ctx: &Context, msg: &Message, mut args: Args) -> CommandRe
         args.single::<String>()?.to_lowercase()
     };
     
+    let guild = msg.guild_id.ok_or("Unable to get guild where command was sent")?;
+
     let response = match subcommand.as_str() {
         "set" => {
-            let guild = msg.guild_id.ok_or("Unable to get guild where command was sent")?;
             let date_str = args.current().ok_or("No date argument passed")?.to_owned();
             args.advance();
 
@@ -212,12 +236,14 @@ pub async fn birthday(ctx: &Context, msg: &Message, mut args: Args) -> CommandRe
             set_birthday(ctx, guild, msg.author.id, &date_str, privacy).await?
         },
         "check" => {
-            let guild = msg.guild_id.ok_or("Unable to get guild where command was sent")?;
             if msg.mentions.is_empty() {
                 todays_birthdays(ctx, guild).await?
             } else {
                 user_birthdays(ctx, guild, &msg.mentions).await?
             }
+        },
+        "clear" => {
+            clear_birthday(ctx, guild, msg.author.id).await?
         },
         _ => {
             MessageBuilder::new()
@@ -292,11 +318,11 @@ pub async fn check_birthdays_loop(ctx: Context) {
 
 pub async fn birthday_slashcommand(ctx: &Context, command: &ApplicationCommandInteraction) -> CommandResult {
     if let Some(subcommand) = command.data.options.get(0) {
+        let guild = command.guild_id.ok_or("Unable to get guild where command was sent")?;
         match subcommand.name.as_str() {
             "set" => {
                 if let Some(date_arg) = subcommand.options.first() {
                     if let Some(ApplicationCommandInteractionDataOptionValue::String(date_str)) = &date_arg.resolved {
-                        let guild = command.guild_id.ok_or("Unable to get guild where command was sent")?;
                         
                         let privacy = subcommand.options.iter().find_map(|x|{
                             if let Some(ApplicationCommandInteractionDataOptionValue::String(arg_str)) = &x.resolved {
@@ -317,8 +343,16 @@ pub async fn birthday_slashcommand(ctx: &Context, command: &ApplicationCommandIn
                 }
                 Err("No date argument passed".into())
             },
+            "clear" => {
+                let response = clear_birthday(ctx, guild, command.user.id).await?;
+
+                command.edit_original_interaction_response(&ctx.http, |r| {
+                    r.content(response)
+                }).await?;
+
+                Ok(())
+            },
             "check" => {
-                let guild = command.guild_id.ok_or("Unable to get guild where command was sent")?;
                 let users: Vec<User> = subcommand.options.iter().filter_map(|x|{
                     if let Some(ApplicationCommandInteractionDataOptionValue::User(user, _)) = &x.resolved {
                         Some(user.clone())

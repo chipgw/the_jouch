@@ -6,6 +6,7 @@ use serenity::model::interactions::application_command::{ApplicationCommandInter
 use serenity::model::prelude::*;
 use serenity::prelude::*;
 use crate::db::{Db, UserKey};
+use super::autonick::check_nick_user;
 use super::birthday::is_birthday_today;
 
 const SIT_ONE: (u32, u32) = (385, 64);
@@ -170,8 +171,10 @@ async fn sit_internal(ctx: &Context, user: &User, guild: Option<GuildId>, with: 
         let mut data = ctx.data.write().await;
         let db = data.get_mut::<Db>().ok_or("Unable to get database")?;
         increment_sit_counter(db, user, guild)?;
+        let _ = check_nick_user(ctx, &UserKey { user: user.id, guild }, db).await;
         if let Some(user) = with {
             increment_sit_counter(db, user, guild)?;
+            let _ = check_nick_user(ctx, &UserKey { user: user.id, guild }, db).await;
         }
     }
 
