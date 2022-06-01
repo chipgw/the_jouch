@@ -22,10 +22,10 @@ pub struct ResponseTable {
 }
 
 impl ResponseTable {
-    pub fn process<'a>(&self, message: &String) -> Vec<Response> {
+    pub fn process<'a>(&self, words: &Vec<&'a str>) -> Vec<Response> {
         let mut responses = Vec::new();
         for data in &self.map {
-            if data.triggers.iter().any(|a| message.contains(a)) {
+            if data.triggers.iter().any(|a| words.into_iter().any(|b| { a == b })) {
                 responses.extend_from_slice(&data.responses);
             }
         }
@@ -54,11 +54,16 @@ async fn process_internal(ctx: &Context, msg: &Message) -> CommandResult {
     let config = data.get::<Config>().ok_or("Unable to get config")?;
 
     let message_lower = msg.content.to_lowercase();
+    // words is an iterator, so it needs to be mutable.
+    let words = message_lower
+        .split(|c: char| { !c.is_alphabetic() })
+        .filter(|s| !s.is_empty())
+        .collect();
 
     if let Some(guild) = msg.guild_id {
         let result = db.read_guild(guild, |guild| {
             guild.canned_response_table.as_ref().map(|table|{
-                table.process(&message_lower)
+                table.process(&words)
             })
         })?.unwrap_or_default();
 
@@ -68,7 +73,7 @@ async fn process_internal(ctx: &Context, msg: &Message) -> CommandResult {
     }
 
     // if we reached this point the guild didn't have a response table so we use the bot's default table
-    handle_responses(config.canned_response_table.process(&message_lower), ctx, msg).await
+    handle_responses(config.canned_response_table.process(&words), ctx, msg).await
 }
 
 

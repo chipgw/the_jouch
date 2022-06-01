@@ -1,4 +1,4 @@
-use ron::{de::from_reader,ser::to_writer};
+use ron::{de::from_reader,ser::{to_writer_pretty, PrettyConfig}};
 use std::{fs::File, io::{Error,ErrorKind}, path::Path};
 use serde::{Serialize,Deserialize};
 use serenity::prelude::TypeMapKey;
@@ -34,7 +34,8 @@ impl Config {
     pub fn save(&self) -> std::io::Result<()> {
         let f = File::create(CONFIG_PATH)?;
         
-        to_writer(f, &self).map_err(|e| {Error::new(ErrorKind::Other, e)})?;
+        to_writer_pretty(f, &self, PrettyConfig::default())
+            .map_err(|e| {Error::new(ErrorKind::Other, e)})?;
 
         Ok(())
     }
