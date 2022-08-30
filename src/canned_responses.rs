@@ -15,7 +15,8 @@ pub enum Trigger {
     FullMatch(String),
     StartsWith(String),
     EndsWith(String),
-    RepeatedCharacter(char),
+    // number represents minumum length the word should be
+    RepeatedCharacter(char, usize),
 }
 
 impl From<&str> for Trigger {
@@ -30,7 +31,7 @@ impl PartialEq<&str> for Trigger {
             Trigger::FullMatch(word) => word == other,
             Trigger::StartsWith(pat) => other.starts_with(pat),
             Trigger::EndsWith(pat) => other.ends_with(pat),
-            Trigger::RepeatedCharacter(a) => other.chars().all(|ref b| a == b),
+            Trigger::RepeatedCharacter(a, min) => other.len() >= *min && other.chars().all(|ref b| a == b),
         }
     }
 }
