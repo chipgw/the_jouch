@@ -10,9 +10,34 @@ pub enum Response {
     Reaction(String),
 }
 
+#[derive(Eq, PartialEq, Serialize, Deserialize, Clone, Debug)]
+pub enum Trigger {
+    FullMatch(String),
+    StartsWith(String),
+    EndsWith(String),
+    RepeatedCharacter(char),
+}
+
+impl From<&str> for Trigger {
+    fn from(other: &str) -> Self {
+        Self::FullMatch(other.into())
+    }
+}
+
+impl PartialEq<&str> for Trigger {
+    fn eq(&self, other: &&str) -> bool {
+        match self {
+            Trigger::FullMatch(word) => word == other,
+            Trigger::StartsWith(pat) => other.starts_with(pat),
+            Trigger::EndsWith(pat) => other.ends_with(pat),
+            Trigger::RepeatedCharacter(a) => other.chars().all(|ref b| a == b),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ResponseData {
-    pub triggers: Vec<String>,
+    pub triggers: Vec<Trigger>,
     pub responses: Vec<Response>,
 }
 
@@ -54,7 +79,6 @@ async fn process_internal(ctx: &Context, msg: &Message) -> CommandResult {
     let config = data.get::<Config>().ok_or("Unable to get config")?;
 
     let message_lower = msg.content.to_lowercase();
-    // words is an iterator, so it needs to be mutable.
     let words = message_lower
         .split(|c: char| { !c.is_alphabetic() })
         .filter(|s| !s.is_empty())
@@ -88,7 +112,7 @@ impl Default for ResponseTable {
     fn default() -> Self {
         Self { map: vec![
             ResponseData {
-                triggers: vec!["heresy".into(), "heretic".into(), "heresies".into()],
+                triggers: vec![Trigger::FullMatch("heresy".into()), Trigger::StartsWith("heretic".into()), Trigger::FullMatch("heresies".into())],
                 responses: vec![Response::Reply("Heresy has no place on The Jouch".into()), Response::Reaction("<:bythepope:881212318707482674>".into())],
             },
         ] }
