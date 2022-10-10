@@ -13,8 +13,12 @@ const SIT_ONE: (u32, u32) = (385, 64);
 const SIT_WITH: (u32, u32, u32, u32) = (240, 64, 580, 64);
 const HAT_OFFSET: (u32, u32) = (48, 64);
 
-async fn get_face(user: &User) -> CommandResult<DynamicImage> {
-    let buffer = reqwest::get(user.face()).await?.bytes().await?;
+async fn get_face(ctx: &Context, user: &User, guild: Option<GuildId>) -> CommandResult<DynamicImage> {
+    let buffer = reqwest::get(if let Some(guild) = guild {
+        guild.member(ctx, user.id).await?.face()
+    } else {
+        user.face()
+    }).await?.bytes().await?;
 
     Ok(if let Some(img) = webp::Decoder::new(&buffer).decode() {
         img.to_image()
@@ -138,10 +142,10 @@ async fn sit_internal(ctx: &Context, user: &User, guild: Option<GuildId>, with: 
 
     let party_hat_image = image::io::Reader::open("assets/party-hat-0001.png")?.decode()?;
 
-    let user_avatar = get_face(user).await?;
+    let user_avatar = get_face(ctx, user, guild).await?;
 
     if let Some(other) = with {
-        let with_avatar = get_face(other).await?;
+        let with_avatar = get_face(ctx, other, guild).await?;
 
         blend(&mut base_image, &user_avatar, SIT_WITH.0, SIT_WITH.1, true)?;
         blend(&mut base_image, &with_avatar, SIT_WITH.2, SIT_WITH.3, true)?;
