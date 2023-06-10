@@ -89,21 +89,35 @@ pub fn increment_sit_counter(db: &mut Db, user: &User, guild: GuildId) -> Comman
     Ok(())
 }
 
+pub fn increment_flip_counter(db: &mut Db, user: &User, guild: GuildId) -> CommandResult {
+    let key = UserKey {
+        user: user.id,
+        guild,
+    };
+
+    db.update(&key, |data| { 
+        data.flip_count = Some(data.flip_count.unwrap_or_default() + 1);
+    })?;
+
+    Ok(())
+}
+
 async fn sit_check(ctx: &Context, user: &User, guild: Option<GuildId>, users: &Vec<User>) -> CommandResult<CreateEmbed> {
     let data = ctx.data.read().await;
     let db = data.get::<Db>().ok_or("Unable to get database")?;
 
-    let mut sit_data: Vec<(String, u64)> = Vec::new();
+    // Name, sit_count, flip_count
+    let mut sit_data: Vec<(String, u64, u64)> = Vec::new();
 
     let title = if let Some(guild) = guild {
         if users.is_empty() {
             let users = db.get_users(guild)?;
 
             for user_key in &users {
-                if let Some(count) = db.read(user_key, |data|{ data.sit_count })?.unwrap_or_default() {
+                if let (Some(sit_count), Some(flip_count)) = db.read(user_key, |data|{ (data.sit_count, data.flip_count) })?.unwrap_or_default() {
                     let user = user_key.user.to_user(ctx).await?;
                     let name = user.nick_in(ctx, guild).await.unwrap_or(user.name);
-                    sit_data.push((name, count));
+                    sit_data.push((name, sit_count, flip_count));
                 }
             };
             sit_data.sort_unstable_by(|a, b|{ b.1.cmp(&a.1) });
@@ -117,10 +131,10 @@ async fn sit_check(ctx: &Context, user: &User, guild: Option<GuildId>, users: &V
                     guild,
                 };
                 let name = user.nick_in(ctx, guild).await.unwrap_or(user.name.clone());
-                let count = db.read(&key, |data| {
-                    data.sit_count.unwrap_or_default()
-                })?;
-                sit_data.push((name, count.unwrap_or_default()));
+                let (sit_count, flip_count) = db.read(&key, |data| {
+                    (data.sit_count.unwrap_or_default(), data.flip_count.unwrap_or_default())
+                })?.unwrap_or_default();
+                sit_data.push((name, sit_count, flip_count));
             }
             "Sit Data For Users"
         }
@@ -129,13 +143,13 @@ async fn sit_check(ctx: &Context, user: &User, guild: Option<GuildId>, users: &V
 
         for guild in guilds {
             let user_key = UserKey { user: user.id, guild };
-            if let Some(count) = db.read(&user_key, |data|{ data.sit_count })?.unwrap_or_default() {
+            if let (Some(sit_count), Some(flip_count)) = db.read(&user_key, |data|{ (data.sit_count, data.flip_count) })?.unwrap_or_default() {
                 let name = if let Some(name) = guild.name(&ctx.cache) {
                     name
                 } else {
                     guild.to_partial_guild(&ctx.http).await?.name
                 };
-                sit_data.push((name, count));
+                sit_data.push((name, sit_count, flip_count));
             }
         }
 
@@ -144,8 +158,8 @@ async fn sit_check(ctx: &Context, user: &User, guild: Option<GuildId>, users: &V
 
     let mut embed = CreateEmbed::default();
 
-    for (user, count) in sit_data {
-        embed.field(user, format!("Times on The Jouch: {}", count), false);
+    for (user, sit_count, flip_count) in sit_data {
+        embed.field(user, format!("Times on The Jouch: {}\nFlips of The Jouch: {}", sit_count, flip_count), false);
     }
     embed.title(title);
 
@@ -338,6 +352,7 @@ pub async fn flip_slashcommand(ctx: &Context, command: &ApplicationCommandIntera
         db.update_guild(guild, |data|{
             data.jouch_orientation = new_orientation;
         })?;
+        increment_flip_counter(db, &command.user, guild)?;
     }
 
     let emote = match new_orientation {

@@ -126,6 +126,8 @@ pub struct UserData {
     pub auto_nick: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sit_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flip_count: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
