@@ -7,6 +7,7 @@ use serenity::model::interactions::application_command::{ApplicationCommandInter
 use serenity::model::prelude::*;
 use serenity::prelude::*;
 use serde::{Serialize, Deserialize};
+use serenity::utils::MessageBuilder;
 use crate::db::{Db, UserKey};
 use super::autonick::check_nick_user;
 use super::birthday::is_birthday_today;
@@ -107,19 +108,20 @@ async fn sit_check(ctx: &Context, user: &User, guild: Option<GuildId>, users: &V
     let db = data.get::<Db>().ok_or("Unable to get database")?;
 
     // Name, sit_count, flip_count
-    let mut sit_data: Vec<(String, u64, u64)> = Vec::new();
+    let mut sit_data: Vec<(String, Option<u64>, Option<u64>)> = Vec::new();
 
     let title = if let Some(guild) = guild {
         if users.is_empty() {
             let users = db.get_users(guild)?;
 
             for user_key in &users {
-                if let (Some(sit_count), Some(flip_count)) = db.read(user_key, |data|{ (data.sit_count, data.flip_count) })?.unwrap_or_default() {
-                    let user = user_key.user.to_user(ctx).await?;
-                    let name = user.nick_in(ctx, guild).await.unwrap_or(user.name);
-                    sit_data.push((name, sit_count, flip_count));
-                }
+                let (sit_count, flip_count) = db.read(user_key, |data|{ (data.sit_count, data.flip_count) })?.unwrap_or_default();
+                let user = user_key.user.to_user(ctx).await?;
+                let name = user.nick_in(ctx, guild).await.unwrap_or(user.name);
+                sit_data.push((name, sit_count, flip_count));
             };
+            // TODO - add option to sort by flips instead of sits, or include both in sorting somehow.
+            // (will probably separate the leaderboard/check functionality into its own command anyway, so will take care of it then)
             sit_data.sort_unstable_by(|a, b|{ b.1.cmp(&a.1) });
             sit_data.truncate(10);
 
@@ -132,7 +134,7 @@ async fn sit_check(ctx: &Context, user: &User, guild: Option<GuildId>, users: &V
                 };
                 let name = user.nick_in(ctx, guild).await.unwrap_or(user.name.clone());
                 let (sit_count, flip_count) = db.read(&key, |data| {
-                    (data.sit_count.unwrap_or_default(), data.flip_count.unwrap_or_default())
+                    (data.sit_count, data.flip_count)
                 })?.unwrap_or_default();
                 sit_data.push((name, sit_count, flip_count));
             }
@@ -143,14 +145,13 @@ async fn sit_check(ctx: &Context, user: &User, guild: Option<GuildId>, users: &V
 
         for guild in guilds {
             let user_key = UserKey { user: user.id, guild };
-            if let (Some(sit_count), Some(flip_count)) = db.read(&user_key, |data|{ (data.sit_count, data.flip_count) })?.unwrap_or_default() {
+            let (sit_count, flip_count) = db.read(&user_key, |data|{ (data.sit_count, data.flip_count) })?.unwrap_or_default();
                 let name = if let Some(name) = guild.name(&ctx.cache) {
                     name
                 } else {
                     guild.to_partial_guild(&ctx.http).await?.name
                 };
                 sit_data.push((name, sit_count, flip_count));
-            }
         }
 
         "Sit data in all servers"
@@ -159,7 +160,18 @@ async fn sit_check(ctx: &Context, user: &User, guild: Option<GuildId>, users: &V
     let mut embed = CreateEmbed::default();
 
     for (user, sit_count, flip_count) in sit_data {
-        embed.field(user, format!("Times on The Jouch: {}\nFlips of The Jouch: {}", sit_count, flip_count), false);
+        if sit_count.is_none() && flip_count.is_none() {
+            // We have neither sit nore flip data, so don't display at all.
+            continue;
+        }
+        let mut msg = MessageBuilder::new();
+        if let Some(sit_count) = sit_count {
+            msg.push("Times on The Jouch: ").push_line(sit_count);
+        }
+        if let Some(flip_count) = flip_count {
+            msg.push("Flips of The Jouch: ").push_line(flip_count);
+        }
+        embed.field(user, msg.build(), false);
     }
     embed.title(title);
 
