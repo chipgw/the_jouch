@@ -1779,6 +1779,7 @@ dependencies = [
  "enum-utils",
  "image",
  "mini-redis",
+ "rand",
  "reqwest",
  "ron 0.7.0",
  "rustbreak",

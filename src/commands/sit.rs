@@ -1,10 +1,12 @@
 use std::io::Cursor;
 use image::{GenericImage,GenericImageView,DynamicImage,ImageResult,error,imageops::FilterType,Pixel,ImageOutputFormat};
+use rand::{distributions::Standard, prelude::Distribution, self, Rng};
 use serenity::builder::CreateEmbed;
 use serenity::framework::standard::{macros::command, Args, CommandResult};
 use serenity::model::interactions::application_command::{ApplicationCommandInteraction, ApplicationCommandInteractionDataOptionValue};
 use serenity::model::prelude::*;
 use serenity::prelude::*;
+use serde::{Serialize, Deserialize};
 use crate::db::{Db, UserKey};
 use super::autonick::check_nick_user;
 use super::birthday::is_birthday_today;
@@ -12,6 +14,25 @@ use super::birthday::is_birthday_today;
 const SIT_ONE: (u32, u32) = (385, 64);
 const SIT_WITH: (u32, u32, u32, u32) = (240, 64, 580, 64);
 const HAT_OFFSET: (u32, u32) = (48, 64);
+
+#[derive(Default, Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum JouchOrientation {
+    #[default] Normal,
+    UpsideDown,
+    RotatedLeft,
+    RotatedRight,
+}
+
+impl Distribution<JouchOrientation> for Standard {
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> JouchOrientation {
+        match rng.gen_range(0..=3) {
+            1 => JouchOrientation::UpsideDown,
+            2 => JouchOrientation::RotatedLeft,
+            3 => JouchOrientation::RotatedRight,
+            _ => JouchOrientation::Normal,
+        }
+    }
+}
 
 async fn get_face(ctx: &Context, user: &User, guild: Option<GuildId>) -> CommandResult<DynamicImage> {
     let buffer = reqwest::get(if let Some(guild) = guild {
@@ -168,6 +189,23 @@ async fn sit_internal(ctx: &Context, user: &User, guild: Option<GuildId>, with: 
         }
     }
 
+    // rotate output image based on current orientation in guild
+    let orientation = if let Some(guild) = guild {
+        let data = ctx.data.read().await;
+        let db = data.get::<Db>().ok_or("Unable to get database")?;
+        db.read_guild(guild, |data|{
+            data.jouch_orientation
+        }).unwrap_or_default().unwrap_or_default() // Not critical; don't raise an error if it isn't available.
+    } else {
+        Default::default()
+    };
+    base_image = match orientation {
+        JouchOrientation::Normal => base_image,
+        JouchOrientation::UpsideDown => base_image.rotate180(),
+        JouchOrientation::RotatedLeft => base_image.rotate270(),
+        JouchOrientation::RotatedRight => base_image.rotate90(),
+    };
+
     let mut image_bytes: Vec<u8> = vec![];
     base_image.write_to(&mut Cursor::new(&mut image_bytes), ImageOutputFormat::Png)?;
 
@@ -288,4 +326,30 @@ pub async fn sit_slashcommand(ctx: &Context, command: &ApplicationCommandInterac
     } else {
         Err("Please provide a valid subcommand".into())
     }
+}
+
+pub async fn flip_slashcommand(ctx: &Context, command: &ApplicationCommandInteraction) -> CommandResult {
+    // TODO - weight this to prefer orientations other than current (and potentially to add rare "orientations" in the future)
+    let new_orientation: JouchOrientation = rand::random();
+
+    if let Some(guild) = command.guild_id {
+        let mut data = ctx.data.write().await;
+        let db = data.get_mut::<Db>().ok_or("Unable to get database")?;
+        db.update_guild(guild, |data|{
+            data.jouch_orientation = new_orientation;
+        })?;
+    }
+
+    let emote = match new_orientation {
+        JouchOrientation::Normal => "<:jouchup:1116889660065591296>",
+        JouchOrientation::UpsideDown => "<:jouchdn:1116889654734626906>",
+        JouchOrientation::RotatedLeft => "<:jouchrl:1116889657188302958>",
+        JouchOrientation::RotatedRight => "<:jouchrr:1116889658488533043>",
+    };
+
+    command.edit_original_interaction_response(&ctx.http, |r| {
+        r.content("(╯°□°)╯︵".to_owned() + emote)
+    }).await?;
+
+    Ok(())
 }

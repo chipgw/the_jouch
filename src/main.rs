@@ -73,6 +73,9 @@ impl Handler {
             command
         })
         .create_application_command(|command| {
+            command.name("flip").description("Flip The Jouch")
+        })
+        .create_application_command(|command| {
             command.name("birthday").description("Birthday tracking by The Jouch");
 
             command.create_option(|option| {
@@ -151,6 +154,7 @@ impl Handler {
 
         let content = match command.data.name.as_str() {
             "sit" => sit_slashcommand(&ctx, &command).await,
+            "flip" => flip_slashcommand(ctx, &command).await,
             "birthday" => birthday_slashcommand(&ctx, &command).await,
             "clear_from" => clear_from_slashcommand(&ctx, &command).await,
             "autonick" => autonick(&ctx, &command).await,

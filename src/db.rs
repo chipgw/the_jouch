@@ -6,7 +6,7 @@ use serenity::prelude::TypeMapKey;
 use serenity::model::id::{UserId,GuildId};
 use serde::{Serialize, Deserialize};
 
-use crate::{commands::birthday::BirthdayPrivacy,canned_responses::ResponseTable};
+use crate::{commands::{sit::JouchOrientation, birthday::BirthdayPrivacy}, canned_responses::ResponseTable};
 
 type DbData = HashMap<u64, GuildData>;
 type DbType = PathDatabase<DbData, Ron>;
@@ -36,6 +36,18 @@ impl Db {
             let guild_entry = db.entry(user_key.guild.into()).or_default();
             let user_entry = guild_entry.users.entry(user_key.user.into()).or_default();
             task(user_entry)
+        })?;
+        self.db.save()?;
+        Ok(r)
+    }
+
+    pub fn update_guild<T, R>(&mut self, guild: GuildId, task: T) -> error::Result<R> 
+    where 
+        T: FnOnce(&mut GuildData) -> R
+    {
+        let r = self.db.write(|db| { 
+            let guild_entry = db.entry(guild.into()).or_default();
+            task(guild_entry)
         })?;
         self.db.save()?;
         Ok(r)
@@ -125,4 +137,6 @@ pub struct GuildData {
     pub birthday_announce_when_none: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub canned_response_table: Option<ResponseTable>,
+    #[serde(default)]
+    pub jouch_orientation: JouchOrientation,
 }

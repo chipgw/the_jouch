@@ -18,3 +18,4 @@ image = "0.24"
 webp = { version = "0.2", features = ["img"] }
 reqwest = "*"
 enum-utils = "0.1"
+rand="*"
