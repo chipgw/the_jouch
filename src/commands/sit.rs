@@ -368,14 +368,14 @@ pub async fn flip_slashcommand(ctx: &Context, command: &ApplicationCommandIntera
     }
 
     let emote = match new_orientation {
-        JouchOrientation::Normal => "<:jouchup:1116889660065591296>",
-        JouchOrientation::UpsideDown => "<:jouchdn:1116889654734626906>",
-        JouchOrientation::RotatedLeft => "<:jouchrl:1116889657188302958>",
-        JouchOrientation::RotatedRight => "<:jouchrr:1116889658488533043>",
-    };
+        JouchOrientation::Normal => "<:jouchup1:1117080763565879397><:jouchup2:1117080764572520449>",
+        JouchOrientation::UpsideDown => "<:jouchdn1:1117080756309721139><:jouchdn2:1117080758612410401> ",
+        JouchOrientation::RotatedLeft => "<:jouchl1:1117080760185270366>\n<:jouchl2:1117080761615519814>",
+        JouchOrientation::RotatedRight => "<:jouchr1:1117079201321861150>\n<:jouchr2:1117079202890530906>",
+    }.to_owned();
 
     command.edit_original_interaction_response(&ctx.http, |r| {
-        r.content("(╯°□°)╯︵".to_owned() + emote)
+        r.content(emote + "︵╰(°□°╰)")
     }).await?;
 
     Ok(())
