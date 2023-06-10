@@ -1,6 +1,7 @@
 use std::convert::TryFrom;
-use serenity::{framework::standard::{CommandResult, macros::hook}, model::channel::{Message, ReactionType}, prelude::*};
+use serenity::{model::channel::{Message, ReactionType}, prelude::*};
 use serde::{Deserialize, Serialize};
+use crate::CommandResult;
 
 use crate::{config::Config, db::Db};
 
@@ -74,7 +75,7 @@ async fn handle_responses(responses: Vec<Response>, ctx: &Context, msg: &Message
     Ok(())
 }
 
-async fn process_internal(ctx: &Context, msg: &Message) -> CommandResult {
+pub async fn process(ctx: &Context, msg: &Message) -> CommandResult {
     let data = ctx.data.read().await;
     let db = data.get::<Db>().ok_or("Unable to get database")?;
     let config = data.get::<Config>().ok_or("Unable to get config")?;
@@ -99,14 +100,6 @@ async fn process_internal(ctx: &Context, msg: &Message) -> CommandResult {
 
     // if we reached this point the guild didn't have a response table so we use the bot's default table
     handle_responses(config.canned_response_table.process(&words), ctx, msg).await
-}
-
-
-#[hook]
-pub async fn process(ctx: &Context, msg: &Message) {
-    if let Err(err) = process_internal(ctx, msg).await {
-        println!("Error processing canned responses: {:?}", err);
-    }
 }
 
 impl Default for ResponseTable {

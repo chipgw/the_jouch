@@ -2,31 +2,28 @@ mod canned_responses;
 mod commands;
 mod db;
 mod config;
+use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
 
-use std::{collections::HashSet};
-
-use serenity::{async_trait, client::{Client, Context, EventHandler}, framework::standard::{
-        StandardFramework,
-        macros::{group, hook},
-        DispatchError,
-        CommandResult,
-    }, http::Http, model::{
+use serenity::{async_trait, client::{Client, Context, EventHandler}, model::{
         channel::Message, gateway::Ready, id::GuildId,
-        interactions::{
-            application_command::{
-                ApplicationCommand,
-                ApplicationCommandOptionType, ApplicationCommandType, ApplicationCommandInteraction,
+        application::{
+            command::{
+                Command,
+                CommandOptionType,
+                CommandType,
             },
-            Interaction,
-            InteractionResponseType,
+            interaction::{
+                Interaction,
+                InteractionResponseType,
+            },
         },
-    }, utils::MessageBuilder, builder::CreateApplicationCommands, prelude::GatewayIntents};
+    }, builder::CreateApplicationCommands, prelude::GatewayIntents};
 
 use commands::{autonick::*, birthday::*, clear::*, sit::*};
 
-#[group]
-#[commands(birthday, clear_from, sit)]
-struct General;
+// same as in serenety::framework::standard, but we otherwise don't want framework any more so redefine here
+pub type CommandError = Box<dyn std::error::Error + Send + Sync>;
+pub type CommandResult<T = ()> = Result<T, CommandError>;
 
 struct Handler;
 
@@ -35,15 +32,14 @@ impl Handler {
         commands
         .create_application_command(|command| {
             command.name("sit").description("Sit on The Jouch");
-            // TODO - restore once it's possible to attach images to command responses
             command.create_option(|option| {
                 option.name("with")
                     .description("sit with another user")
-                    .kind(ApplicationCommandOptionType::SubCommand)
+                    .kind(CommandOptionType::SubCommand)
                     .create_sub_option(|option|{
                         option.name("friend")
                         .description("a friend to sit on The Jouch with")
-                        .kind(ApplicationCommandOptionType::User)
+                        .kind(CommandOptionType::User)
                         .required(true)
                     })
             });
@@ -51,20 +47,20 @@ impl Handler {
                 option
                     .name("solo")
                     .description("sit by yourself")
-                    .kind(ApplicationCommandOptionType::SubCommand)
+                    .kind(CommandOptionType::SubCommand)
             });
             command.create_option(|option| {
                 option
                     .name("check")
                     .description("check how often users have sat on The Jouch")
-                    .kind(ApplicationCommandOptionType::SubCommand);
+                    .kind(CommandOptionType::SubCommand);
 
                     // allow up to 10 users to check in on.
                     for i in 0..10 {
                         option.create_sub_option(|option|{
                             option.name(format!("user{}", i))
                             .description("a user to check on")
-                            .kind(ApplicationCommandOptionType::User)
+                            .kind(CommandOptionType::User)
                         });
                     }
 
@@ -82,18 +78,18 @@ impl Handler {
                 option
                     .name("set")
                     .description("set your birthday")
-                    .kind(ApplicationCommandOptionType::SubCommand)
+                    .kind(CommandOptionType::SubCommand)
                     .create_sub_option(|option|{
                         option
                             .name("birthday")
-                            .kind(ApplicationCommandOptionType::String)
+                            .kind(CommandOptionType::String)
                             .description("Birthday date string")
                             .required(true)
                     })
                     .create_sub_option(|option|{
                         option
                             .name("privacy")
-                            .kind(ApplicationCommandOptionType::String)
+                            .kind(CommandOptionType::String)
                             .description("Optional birthday privacy setting (defaults to Public)")
                             .add_string_choice("Public", "PublicFull")
                             .add_string_choice("Public Month/Day", "PublicDay")
@@ -104,18 +100,18 @@ impl Handler {
                 option
                     .name("check")
                     .description("check birthday for user")
-                    .kind(ApplicationCommandOptionType::SubCommand)
+                    .kind(CommandOptionType::SubCommand)
                     .create_sub_option(|option|{
                         option.name("user")
                         .description("a user to check on")
-                        .kind(ApplicationCommandOptionType::User)
+                        .kind(CommandOptionType::User)
                     })
             });
             command.create_option(|option| {
                 option
                     .name("clear")
                     .description("clear your birthday")
-                    .kind(ApplicationCommandOptionType::SubCommand)
+                    .kind(CommandOptionType::SubCommand)
             });
 
             command
@@ -127,11 +123,11 @@ impl Handler {
                 option
                     .name("set")
                     .description("set your nickname format string")
-                    .kind(ApplicationCommandOptionType::SubCommand)
+                    .kind(CommandOptionType::SubCommand)
                     .create_sub_option(|option|{
                         option
                             .name("nickname")
-                            .kind(ApplicationCommandOptionType::String)
+                            .kind(CommandOptionType::String)
                             .description("format string; %a will be replaced with age and %j with times sat on The Jouch")
                             .required(true)
                     })
@@ -140,7 +136,7 @@ impl Handler {
                 option
                     .name("clear")
                     .description("clear automatic nickname")
-                    .kind(ApplicationCommandOptionType::SubCommand)
+                    .kind(CommandOptionType::SubCommand)
             });
 
             command
@@ -153,10 +149,10 @@ impl Handler {
         }).await?;
 
         let content = match command.data.name.as_str() {
-            "sit" => sit_slashcommand(&ctx, &command).await,
-            "flip" => flip_slashcommand(ctx, &command).await,
-            "birthday" => birthday_slashcommand(&ctx, &command).await,
-            "clear_from" => clear_from_slashcommand(&ctx, &command).await,
+            "sit" => sit(&ctx, &command).await,
+            "flip" => flip(ctx, &command).await,
+            "birthday" => birthday(&ctx, &command).await,
+            "clear_from" => clear_from(&ctx, &command).await,
             "autonick" => autonick(&ctx, &command).await,
             _ => Err("not implemented :(".into()),
         };
@@ -197,14 +193,14 @@ impl EventHandler for Handler {
 
                     // only available in testing
                     commands.create_application_command(|command| {
-                        command.name("clear_from").kind(ApplicationCommandType::Message)
+                        command.name("clear_from").kind(CommandType::Message)
                     })
                 }).await
             } else {
-                ApplicationCommand::set_global_application_commands(&ctx.http, Handler::create_commands).await
+                Command::set_global_application_commands(&ctx.http, Handler::create_commands).await
             }
         } else {
-            ApplicationCommand::set_global_application_commands(&ctx.http, Handler::create_commands).await
+            Command::set_global_application_commands(&ctx.http, Handler::create_commands).await
         };
 
         println!("I now have the following slash commands: {:#?}", commands);
@@ -213,6 +209,11 @@ impl EventHandler for Handler {
         // Spawn the nickname & birthday checkers.
         tokio::spawn(check_nicks_loop(ctx.clone()));
         tokio::spawn(check_birthdays_loop(ctx.clone()));
+    }
+    async fn message(&self, ctx: Context, msg: Message) {
+        if let Err(err) = canned_responses::process(&ctx, &msg).await {
+            println!("Error processing canned responses: {:?}", err);
+        }
     }
 }
 
@@ -227,44 +228,12 @@ async fn main() {
         return;
     }
 
-    let http = Http::new_with_application_id(&config.token, config.app_id);
-
-    // We will fetch your bot's owners and id
-    let (owners, bot_id) = match http.get_current_application_info().await {
-        Ok(info) => {
-            let mut owners = HashSet::new();
-            if let Some(team) = info.team {
-                owners.insert(team.owner_user_id);
-            } else {
-                owners.insert(info.owner.id);
-            }
-            match http.get_current_user().await {
-                Ok(bot_id) => (owners, bot_id.id),
-                Err(why) => panic!("Could not access the bot id: {:?}", why),
-            }
-        }
-        Err(why) => panic!("Could not access application info: {:?}", why),
-    };
-
-    let framework = StandardFramework::new()
-        .configure(|c| c
-            .prefix(config.prefix.as_str())
-            .on_mention(Some(bot_id))
-            .owners(owners)) 
-        .group(&GENERAL_GROUP)
-        .on_dispatch_error(dispatch_error)
-        .before(before)
-        .after(after)
-        .unrecognised_command(unknown_command)
-        .normal_message(canned_responses::process);
-
     const INTENTS: GatewayIntents = GatewayIntents::all().difference(GatewayIntents::GUILD_PRESENCES);
 
     // Login with a bot token from the configuration file
     let mut client = Client::builder(config.token.as_str(), INTENTS)
         .event_handler(Handler)
         .application_id(config.app_id)
-        .framework(framework)
         .await
         .expect("Error creating client");
 
@@ -280,52 +249,3 @@ async fn main() {
     }
 }
 
-#[hook]
-async fn dispatch_error(context: &Context, msg: &Message, error: DispatchError, _string: &str) {
-    match error {
-        DispatchError::NotEnoughArguments { min, given } => {
-            let s = format!("Need {} arguments, but only got {}.", min, given);
-
-            let _ = msg.channel_id.say(&context, &s).await;
-        },
-        DispatchError::TooManyArguments { max, given } => {
-            let s = format!("Max arguments allowed is {}, but got {}.", max, given);
-
-            let _ = msg.channel_id.say(&context, &s).await;
-        },
-        _ => println!("Unhandled dispatch error."),
-    }
-}
-
-#[hook]
-async fn before(_ctx: &Context, msg: &Message, command_name: &str) -> bool {
-    println!("Got command '{}' by user '{}'", command_name, msg.author.name);
-
-    // TODO - let guilds enable/disable features and filter out disabled commands here
-
-    true // if `before` returns false, command processing doesn't happen.
-}
-
-#[hook]
-async fn after(ctx: &Context, msg: &Message, command_name: &str, command_result: CommandResult) {
-    match command_result {
-        Ok(()) => println!("Processed command '{}'", command_name),
-        Err(why) => {
-            println!("Command '{}' returned error {:?}", command_name, why);
-
-            let reply_result = msg.reply(ctx, MessageBuilder::new()
-                .push("Error executing command")
-                .push_codeblock(why.to_string(), None)
-                .build()).await;
-                
-            if let Err(err_replying) = reply_result {
-                println!("Command '{}' returned error {:?} when replying with error message", command_name, err_replying);
-            }
-        },
-    }
-}
-
-#[hook]
-async fn unknown_command(_ctx: &Context, _msg: &Message, unknown_command_name: &str) {
-    println!("Could not find command named '{}'", unknown_command_name);
-}

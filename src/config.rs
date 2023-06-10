@@ -9,7 +9,6 @@ use crate::canned_responses::ResponseTable;
 pub struct Config {
     pub token: String,
     pub app_id: u64,
-    pub prefix: String,
     #[serde(default = "crate::commands::autonick::default_interval")]
     pub nick_interval: u64,
     #[serde(default)]
@@ -44,9 +43,12 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            prefix: "~".into(),
             nick_interval: crate::commands::autonick::DEFAULT_INTERVAL,
-            ..Default::default()
+            canned_response_table: Default::default(),
+            testing_guild_id: None,
+            // To be filled in by deployer
+            token: "".into(),
+            app_id: 0,
         }
     }
 }

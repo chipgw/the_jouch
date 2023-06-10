@@ -1,12 +1,12 @@
 use std::{collections::HashSet,time::Duration};
-use serenity::framework::standard::CommandResult;
-use serenity::model::interactions::application_command::{ApplicationCommandInteraction, ApplicationCommandInteractionDataOptionValue};
+use serenity::model::application::interaction::application_command::{ApplicationCommandInteraction, CommandDataOptionValue};
 use serenity::model::prelude::*;
 use serenity::prelude::*;
 use serenity::utils::MessageBuilder;
 use chrono::prelude::*;
 use crate::config::Config;
 use crate::db::{Db, UserKey};
+use crate::CommandResult;
 
 // how many seconds between nickname update checks?
 pub const DEFAULT_INTERVAL: u64 = 600;
@@ -154,7 +154,7 @@ pub async fn autonick(ctx: &Context, command: &ApplicationCommandInteraction) ->
         match subcommand.name.as_str() {
             "set" => {
                 if let Some(nick_arg) = subcommand.options.first() {
-                    if let Some(ApplicationCommandInteractionDataOptionValue::String(nick_str)) = &nick_arg.resolved {                        
+                    if let Some(CommandDataOptionValue::String(nick_str)) = &nick_arg.resolved {                        
                         let response = set_nick(ctx, guild, command.user.id, Some(nick_str.clone())).await?;
 
                         command.edit_original_interaction_response(&ctx.http, |r| {

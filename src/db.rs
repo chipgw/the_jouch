@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use chrono::{DateTime, FixedOffset};
 use rustbreak::{deser::Ron, PathDatabase, error};
-use serenity::framework::standard::CommandResult;
 use serenity::prelude::TypeMapKey;
 use serenity::model::id::{UserId,GuildId};
 use serde::{Serialize, Deserialize};
+use crate::CommandResult;
 
 use crate::{commands::{sit::JouchOrientation, birthday::BirthdayPrivacy}, canned_responses::ResponseTable};
 

@@ -2,13 +2,13 @@ use std::io::Cursor;
 use image::{GenericImage,GenericImageView,DynamicImage,ImageResult,error,imageops::FilterType,Pixel,ImageOutputFormat};
 use rand::{distributions::Standard, prelude::Distribution, self, Rng};
 use serenity::builder::CreateEmbed;
-use serenity::framework::standard::{macros::command, Args, CommandResult};
-use serenity::model::interactions::application_command::{ApplicationCommandInteraction, ApplicationCommandInteractionDataOptionValue};
+use serenity::model::application::interaction::application_command::{ApplicationCommandInteraction, CommandDataOptionValue};
 use serenity::model::prelude::*;
 use serenity::prelude::*;
 use serde::{Serialize, Deserialize};
 use serenity::utils::MessageBuilder;
 use crate::db::{Db, UserKey};
+use crate::CommandResult;
 use super::autonick::check_nick_user;
 use super::birthday::is_birthday_today;
 
@@ -249,62 +249,12 @@ async fn sit_internal(ctx: &Context, user: &User, guild: Option<GuildId>, with: 
     Ok(image_bytes)
 }
 
-#[command]
-pub async fn sit(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
-    let typing = msg.channel_id.start_typing(&ctx.http)?;
-
-    if args.is_empty() {
-        let image_bytes = sit_internal(ctx, &msg.author, msg.guild_id, None).await?;
-        let files = vec![(&*image_bytes, "jouch.png")];
-
-        msg.channel_id.send_files(&ctx.http, files, |m|{
-            m.reference_message(msg)
-        }).await?;
-    } else {
-        let arg = args.single::<String>()?;
-        match arg.to_lowercase().as_str() {
-            "with" => {
-                if msg.mentions.len() != 1 {
-                    return Err(if msg.mentions.is_empty() {
-                        "No one to sit with!"
-                    } else {
-                        "Can only `sit with` one person!"
-                    }.into())
-                } else {
-                    let image_bytes = sit_internal(ctx, &msg.author, msg.guild_id, Some(&msg.mentions[0])).await?;
-                    let files = vec![(&*image_bytes, "jouch.png")];
-
-                    msg.channel_id.send_files(&ctx.http, files, |m|{
-                        m.reference_message(msg)
-                    }).await?;
-                }
-            },
-            "count" | "check" => {
-                let embed = sit_check(ctx, &msg.author, msg.guild_id, &msg.mentions).await?;
-
-                msg.channel_id.send_message(&ctx.http, |m| {
-                    m.set_embed(embed);
-
-                    m.reference_message(msg)
-                }).await?;
-            }
-            _ => {
-                return Err(format!("Unknown option {}", arg).into())
-            }
-        }
-    };
-
-    let _ignore = typing.stop();
-
-    Ok(())
-}
-
-pub async fn sit_slashcommand(ctx: &Context, command: &ApplicationCommandInteraction) -> CommandResult {
+pub async fn sit(ctx: &Context, command: &ApplicationCommandInteraction) -> CommandResult {
     if let Some(subcommand) = command.data.options.first() {
         match subcommand.name.as_str() {
             "with" => {
                 if let Some(user_arg) = subcommand.options.first() {
-                    if let Some(ApplicationCommandInteractionDataOptionValue::User(user, _)) = &user_arg.resolved {
+                    if let Some(CommandDataOptionValue::User(user, _)) = &user_arg.resolved {
                         let image_bytes = sit_internal(ctx, &command.user, command.guild_id, Some(user)).await?;
 
                         let files = vec![(&*image_bytes, "jouch.png")];
@@ -332,7 +282,7 @@ pub async fn sit_slashcommand(ctx: &Context, command: &ApplicationCommandInterac
             "count" | "check" => {
                 let mut users = Vec::new();
                 for user_arg in &subcommand.options {
-                    if let Some(ApplicationCommandInteractionDataOptionValue::User(user, _)) = &user_arg.resolved {
+                    if let Some(CommandDataOptionValue::User(user, _)) = &user_arg.resolved {
                         users.push(user.to_owned());
                     }
                 }
@@ -354,7 +304,7 @@ pub async fn sit_slashcommand(ctx: &Context, command: &ApplicationCommandInterac
     }
 }
 
-pub async fn flip_slashcommand(ctx: &Context, command: &ApplicationCommandInteraction) -> CommandResult {
+pub async fn flip(ctx: &Context, command: &ApplicationCommandInteraction) -> CommandResult {
     // TODO - weight this to prefer orientations other than current (and potentially to add rare "orientations" in the future)
     let new_orientation: JouchOrientation = rand::random();
 

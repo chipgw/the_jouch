@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 use std::str::FromStr;
-use serenity::framework::standard::{macros::command, Args, CommandResult};
-use serenity::model::interactions::application_command::{ApplicationCommandInteraction, ApplicationCommandInteractionDataOptionValue};
+use serenity::model::application::interaction::application_command::{ApplicationCommandInteraction, CommandDataOptionValue};
 use serenity::model::prelude::*;
 use serenity::prelude::*;
 use serenity::utils::MessageBuilder;
@@ -9,6 +8,7 @@ use chrono::{Duration, prelude::*};
 use serde::{Serialize, Deserialize};
 use enum_utils::FromStr;
 use crate::db::{Db, UserKey, UserData};
+use crate::CommandResult;
 
 use super::autonick::check_nick_user;
 
@@ -49,12 +49,12 @@ impl BirthdayPrivacy {
 // would have just made this const but there's no way to do a const Date as far as I can tell
 #[inline]
 pub fn get_bot_birthday() -> NaiveDate {
-    NaiveDate::from_ymd(2021, 7, 31)
+    NaiveDate::from_ymd_opt(2021, 7, 31).unwrap()
 }
 
 pub fn parse_date(date_str: &str) -> CommandResult<DateTime<FixedOffset>> {
     // Default to CST
-    let default_offset: FixedOffset = FixedOffset::west(21600);
+    let default_offset = FixedOffset::west_opt(21600).unwrap();
 
     let mut format_str = String::with_capacity(10);
     for date_option in DATE_OPTIONS {
@@ -68,7 +68,7 @@ pub fn parse_date(date_str: &str) -> CommandResult<DateTime<FixedOffset>> {
             // Trying with no time zone uses different parse function than trying with time zone
             let parsed_date = if time_option.is_empty() {
                 NaiveDate::parse_from_str(date_str, format_str.as_str()).map(|datetime|{
-                    default_offset.from_local_datetime(&datetime.and_time(NaiveTime::from_hms(0, 0, 0))).unwrap()
+                    default_offset.from_local_datetime(&datetime.and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap())).unwrap()
                 })
             } else {
                 DateTime::parse_from_str(date_str, format_str.as_str())
@@ -123,7 +123,7 @@ pub async fn set_birthday(ctx: &Context, guild: GuildId, user: UserId, date_str:
         .build())
 }
 
-fn birthday_date_check(day: Date<Local>, user_data: &UserData) -> bool {
+fn birthday_date_check(day: DateTime<Local>, user_data: &UserData) -> bool {
     if let Some(birthday) = user_data.birthday {
         day.day() == birthday.day() && day.month() == birthday.month() && user_data.birthday_privacy != Some(BirthdayPrivacy::Private)
     } else {
@@ -132,7 +132,7 @@ fn birthday_date_check(day: Date<Local>, user_data: &UserData) -> bool {
 }
 
 pub async fn is_birthday_today(ctx: &Context, user_key: UserKey) -> CommandResult<bool> {
-    let now = Local::today();
+    let now = Local::now();
     if user_key.user == ctx.cache.current_user_id() {
         let bot_birthday = get_bot_birthday();
         return Ok(now.day() == bot_birthday.day() && now.month() == bot_birthday.month());
@@ -151,7 +151,7 @@ pub async fn todays_birthdays(ctx: &Context, guild: GuildId) -> CommandResult<St
 
     let data = ctx.data.read().await;
     let db = data.get::<Db>().ok_or("Unable to get database")?;
-    let now = Local::today();
+    let now = Local::now();
     db.foreach(guild, |user_id,user_data|{
         if birthday_date_check(now, user_data) {
             message.mention(&UserId(*user_id));
@@ -173,7 +173,7 @@ pub async fn todays_birthdays(ctx: &Context, guild: GuildId) -> CommandResult<St
 
 pub async fn user_birthdays(ctx: &Context, guild: GuildId, users: &Vec<User>) -> CommandResult<String> {
     let mut message = MessageBuilder::new();
-    let now = Local::today();
+    let now = Local::now();
     for user in users {
         message.mention(user).push("'s birthday is ");
 
@@ -202,7 +202,7 @@ pub async fn user_birthdays(ctx: &Context, guild: GuildId, users: &Vec<User>) ->
                     } else if let Some(privacy) = user_data.birthday_privacy {
                         message.push_line(birthday.format(privacy.date_format()));
                     } else {
-                        message.push_line(birthday.date());
+                        message.push_line(birthday.date_naive());
                     }
                 },
                 None => {
@@ -212,50 +212,6 @@ pub async fn user_birthdays(ctx: &Context, guild: GuildId, users: &Vec<User>) ->
         })?;
     }
     Ok(message.build())
-}
-
-#[command]
-pub async fn birthday(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
-    let subcommand = if args.is_empty() {
-        // Assume that when !birthday is called with no arguments that the user wants to run the check subcommand
-        "check".into()
-    } else {
-        args.single::<String>()?.to_lowercase()
-    };
-    
-    let guild = msg.guild_id.ok_or("Unable to get guild where command was sent")?;
-
-    let response = match subcommand.as_str() {
-        "set" => {
-            let date_str = args.current().ok_or("No date argument passed")?.to_owned();
-            args.advance();
-
-            // TODO - edit or remove original message to maintain privacy if it's set to private
-            let privacy = args.find::<BirthdayPrivacy>().ok();
-
-            set_birthday(ctx, guild, msg.author.id, &date_str, privacy).await?
-        },
-        "check" => {
-            if msg.mentions.is_empty() {
-                todays_birthdays(ctx, guild).await?
-            } else {
-                user_birthdays(ctx, guild, &msg.mentions).await?
-            }
-        },
-        "clear" => {
-            clear_birthday(ctx, guild, msg.author.id).await?
-        },
-        _ => {
-            MessageBuilder::new()
-                .push("Unknown subcommand ")
-                .push_mono_safe(subcommand)
-                .build()
-        },
-    };
-
-    msg.reply(ctx, response).await?;
-
-    Ok(())
 }
 
 // function to be spun off into its own thread to periodically check for birthdays
@@ -309,23 +265,23 @@ pub async fn check_birthdays_loop(ctx: Context) {
         }
 
         // check every day at 8 am local time (where bot is run)
-        let next = Local::today().and_hms(8, 0, 0) + Duration::days(1);
+        let next = Local::now().date_naive().and_hms_opt(8, 0, 0).unwrap() + Duration::days(1);
 
         // wait until next check
-        tokio::time::sleep((next - Local::now()).to_std().unwrap()).await;
+        tokio::time::sleep((Local.from_local_datetime(&next).unwrap() - Local::now()).to_std().unwrap()).await;
     }
 }
 
-pub async fn birthday_slashcommand(ctx: &Context, command: &ApplicationCommandInteraction) -> CommandResult {
+pub async fn birthday(ctx: &Context, command: &ApplicationCommandInteraction) -> CommandResult {
     if let Some(subcommand) = command.data.options.get(0) {
         let guild = command.guild_id.ok_or("Unable to get guild where command was sent")?;
         match subcommand.name.as_str() {
             "set" => {
                 if let Some(date_arg) = subcommand.options.first() {
-                    if let Some(ApplicationCommandInteractionDataOptionValue::String(date_str)) = &date_arg.resolved {
+                    if let Some(CommandDataOptionValue::String(date_str)) = &date_arg.resolved {
                         
                         let privacy = subcommand.options.iter().find_map(|x|{
-                            if let Some(ApplicationCommandInteractionDataOptionValue::String(arg_str)) = &x.resolved {
+                            if let Some(CommandDataOptionValue::String(arg_str)) = &x.resolved {
                                 BirthdayPrivacy::from_str(arg_str).ok()
                             } else {
                                 None
@@ -354,7 +310,7 @@ pub async fn birthday_slashcommand(ctx: &Context, command: &ApplicationCommandIn
             },
             "check" => {
                 let users: Vec<User> = subcommand.options.iter().filter_map(|x|{
-                    if let Some(ApplicationCommandInteractionDataOptionValue::User(user, _)) = &x.resolved {
+                    if let Some(CommandDataOptionValue::User(user, _)) = &x.resolved {
                         Some(user.clone())
                     } else {
                         None
