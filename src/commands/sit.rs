@@ -24,6 +24,11 @@ pub enum JouchOrientation {
     RotatedRight,
 }
 
+enum RankSortBy {
+    Sits,
+    Flips,
+}
+
 impl Distribution<JouchOrientation> for Standard {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> JouchOrientation {
         match rng.gen_range(0..=3) {
@@ -103,12 +108,18 @@ pub fn increment_flip_counter(db: &mut Db, user: &User, guild: GuildId) -> Comma
     Ok(())
 }
 
-async fn sit_check(ctx: &Context, user: &User, guild: Option<GuildId>, users: &Vec<User>) -> CommandResult<CreateEmbed> {
+struct RankingData {
+    name: String,
+    sit_count: Option<u64>,
+    flip_count: Option<u64>,
+}
+
+async fn sit_check(ctx: &Context, user: &User, guild: Option<GuildId>, users: &Vec<User>, sort_by: RankSortBy) -> CommandResult<CreateEmbed> {
     let data = ctx.data.read().await;
     let db = data.get::<Db>().ok_or("Unable to get database")?;
 
     // Name, sit_count, flip_count
-    let mut sit_data: Vec<(String, Option<u64>, Option<u64>)> = Vec::new();
+    let mut sit_data: Vec<RankingData> = Vec::new();
 
     let title = if let Some(guild) = guild {
         if users.is_empty() {
@@ -118,11 +129,14 @@ async fn sit_check(ctx: &Context, user: &User, guild: Option<GuildId>, users: &V
                 let (sit_count, flip_count) = db.read(user_key, |data|{ (data.sit_count, data.flip_count) })?.unwrap_or_default();
                 let user = user_key.user.to_user(ctx).await?;
                 let name = user.nick_in(ctx, guild).await.unwrap_or(user.name);
-                sit_data.push((name, sit_count, flip_count));
+                sit_data.push(RankingData{name, sit_count, flip_count});
             };
-            // TODO - add option to sort by flips instead of sits, or include both in sorting somehow.
-            // (will probably separate the leaderboard/check functionality into its own command anyway, so will take care of it then)
-            sit_data.sort_unstable_by(|a, b|{ b.1.cmp(&a.1) });
+
+            let sort_func: fn(&RankingData, &RankingData) -> std::cmp::Ordering = match sort_by {
+                RankSortBy::Sits => |a, b| { b.sit_count.cmp(&a.sit_count) },
+                RankSortBy::Flips => |a, b| { b.flip_count.cmp(&a.flip_count) },
+            };
+            sit_data.sort_unstable_by(sort_func);
             sit_data.truncate(10);
 
             "Sit Leaderboard"
@@ -136,7 +150,7 @@ async fn sit_check(ctx: &Context, user: &User, guild: Option<GuildId>, users: &V
                 let (sit_count, flip_count) = db.read(&key, |data| {
                     (data.sit_count, data.flip_count)
                 })?.unwrap_or_default();
-                sit_data.push((name, sit_count, flip_count));
+                sit_data.push(RankingData{name, sit_count, flip_count});
             }
             "Sit Data For Users"
         }
@@ -151,7 +165,7 @@ async fn sit_check(ctx: &Context, user: &User, guild: Option<GuildId>, users: &V
                 } else {
                     guild.to_partial_guild(&ctx.http).await?.name
                 };
-                sit_data.push((name, sit_count, flip_count));
+                sit_data.push(RankingData{name, sit_count, flip_count});
         }
 
         "Sit data in all servers"
@@ -159,19 +173,19 @@ async fn sit_check(ctx: &Context, user: &User, guild: Option<GuildId>, users: &V
 
     let mut embed = CreateEmbed::default();
 
-    for (user, sit_count, flip_count) in sit_data {
-        if sit_count.is_none() && flip_count.is_none() {
+    for data in sit_data {
+        if data.sit_count.is_none() && data.flip_count.is_none() {
             // We have neither sit nore flip data, so don't display at all.
             continue;
         }
         let mut msg = MessageBuilder::new();
-        if let Some(sit_count) = sit_count {
+        if let Some(sit_count) = data.sit_count {
             msg.push("Times on The Jouch: ").push_line(sit_count);
         }
-        if let Some(flip_count) = flip_count {
+        if let Some(flip_count) = data.flip_count {
             msg.push("Flips of The Jouch: ").push_line(flip_count);
         }
-        embed.field(user, msg.build(), false);
+        embed.field(data.name, msg.build(), false);
     }
     embed.title(title);
 
@@ -250,58 +264,60 @@ async fn sit_internal(ctx: &Context, user: &User, guild: Option<GuildId>, with: 
 }
 
 pub async fn sit(ctx: &Context, command: &ApplicationCommandInteraction) -> CommandResult {
-    if let Some(subcommand) = command.data.options.first() {
-        match subcommand.name.as_str() {
-            "with" => {
-                if let Some(user_arg) = subcommand.options.first() {
-                    if let Some(CommandDataOptionValue::User(user, _)) = &user_arg.resolved {
-                        let image_bytes = sit_internal(ctx, &command.user, command.guild_id, Some(user)).await?;
+    if let Some(user_arg) = command.data.options.first() {
+        if let Some(CommandDataOptionValue::User(user, _)) = &user_arg.resolved {
+            let image_bytes = sit_internal(ctx, &command.user, command.guild_id, Some(user)).await?;
 
-                        let files = vec![(&*image_bytes, "jouch.png")];
+            let files = vec![(&*image_bytes, "jouch.png")];
 
-                        // command.channel_id.send_files(&ctx.http, files, |m|{ m }).await?;
-                        command.create_followup_message(&ctx.http, |m| {
-                            m.add_files(files)
-                        }).await?;
+            // command.channel_id.send_files(&ctx.http, files, |m|{ m }).await?;
+            command.create_followup_message(&ctx.http, |m| {
+                m.add_files(files)
+            }).await?;
 
-                        return Ok(())
-                    }
-                }
-                Err("Please provide a valid user".into())
-            },
-            "solo" => {
-                let image_bytes = sit_internal(ctx, &command.user, command.guild_id, None).await?;
-                let file = (&*image_bytes, "jouch.png");
-
-                command.create_followup_message(&ctx.http, |m|{
-                    m.add_file(file)
-                }).await?;
-
-                return Ok(())
-            },
-            "count" | "check" => {
-                let mut users = Vec::new();
-                for user_arg in &subcommand.options {
-                    if let Some(CommandDataOptionValue::User(user, _)) = &user_arg.resolved {
-                        users.push(user.to_owned());
-                    }
-                }
-
-                let embed = sit_check(ctx, &command.user, command.guild_id, &users).await?;
-
-                command.edit_original_interaction_response(&ctx.http, |r| {
-                    r.add_embed(embed)
-                }).await?;
-
-                Ok(())
-            }
-            _ => {
-                Err(format!("Unknown option {}", subcommand.name).into())
-            }
+            Ok(())
+        } else {
+            Err("Couldn't find your friend! (Argument invalid)".into())
         }
     } else {
-        Err("Please provide a valid subcommand".into())
+        let image_bytes = sit_internal(ctx, &command.user, command.guild_id, None).await?;
+        let file = (&*image_bytes, "jouch.png");
+
+        command.create_followup_message(&ctx.http, |m|{
+            m.add_file(file)
+        }).await?;
+
+        Ok(())
     }
+}
+
+pub async fn rank(ctx: &Context, command: &ApplicationCommandInteraction) -> CommandResult {
+    let mut users = Vec::new();
+
+    let mut sort_by = RankSortBy::Sits;
+
+    for arg in &command.data.options {
+        if let Some(CommandDataOptionValue::User(user, _)) = &arg.resolved {
+            users.push(user.to_owned());
+        } else if let Some(CommandDataOptionValue::Integer(as_int)) = &arg.resolved {
+            match arg.name.as_str() {
+                "sort" => sort_by = match as_int {
+                    0 => RankSortBy::Sits,
+                    1 => RankSortBy::Flips,
+                    _ => return Err("Invalid sort value passed!".into()),
+                },
+                _ => return Err(format!("Unknown/unimplemented option {}", arg.name).into()),
+            };
+        }
+    }
+
+    let embed = sit_check(ctx, &command.user, command.guild_id, &users, sort_by).await?;
+
+    command.edit_original_interaction_response(&ctx.http, |r| {
+        r.add_embed(embed)
+    }).await?;
+
+    Ok(())
 }
 
 pub async fn flip(ctx: &Context, command: &ApplicationCommandInteraction) -> CommandResult {

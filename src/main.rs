@@ -33,39 +33,33 @@ impl Handler {
         .create_application_command(|command| {
             command.name("sit").description("Sit on The Jouch");
             command.create_option(|option| {
-                option.name("with")
-                    .description("sit with another user")
-                    .kind(CommandOptionType::SubCommand)
-                    .create_sub_option(|option|{
-                        option.name("friend")
-                        .description("a friend to sit on The Jouch with")
-                        .kind(CommandOptionType::User)
-                        .required(true)
-                    })
-            });
-            command.create_option(|option| {
                 option
-                    .name("solo")
-                    .description("sit by yourself")
-                    .kind(CommandOptionType::SubCommand)
-            });
-            command.create_option(|option| {
+                    .name("friend")
+                    .description("a friend to sit on The Jouch with")
+                    .kind(CommandOptionType::User)
+            })
+        })
+        .create_application_command(|command| {
+            command.name("rankings").description("Check how often users have sat on and/or flipped The Jouch");
+
+            command.create_option(|option|{
                 option
-                    .name("check")
-                    .description("check how often users have sat on The Jouch")
-                    .kind(CommandOptionType::SubCommand);
+                    .name("sort")
+                    .description("what to sort users by (ignored when specifying users)")
+                    .kind(CommandOptionType::Integer)
+                    .add_int_choice("Sits", 0)
+                    .add_int_choice("Flips", 1)
+            });
 
-                    // allow up to 10 users to check in on.
-                    for i in 0..10 {
-                        option.create_sub_option(|option|{
-                            option.name(format!("user{}", i))
-                            .description("a user to check on")
-                            .kind(CommandOptionType::User)
-                        });
-                    }
-
+            // allow up to 10 users to check in on.
+            for i in 0..10 {
+                command.create_option(|option| {
                     option
-            });
+                        .name(format!("user{}", i))
+                        .description("a user to check on")
+                        .kind(CommandOptionType::User)
+                });
+            }
             command
         })
         .create_application_command(|command| {
@@ -150,6 +144,7 @@ impl Handler {
 
         let content = match command.data.name.as_str() {
             "sit" => sit(&ctx, &command).await,
+            "rankings" => rank(&ctx, &command).await,
             "flip" => flip(ctx, &command).await,
             "birthday" => birthday(&ctx, &command).await,
             "clear_from" => clear_from(&ctx, &command).await,
