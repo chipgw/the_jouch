@@ -66,6 +66,9 @@ impl Handler {
             command.name("flip").description("Flip The Jouch")
         })
         .create_application_command(|command| {
+            command.name("rectify").description("Put The Jouch back upright")
+        })
+        .create_application_command(|command| {
             command.name("birthday").description("Birthday tracking by The Jouch");
 
             command.create_option(|option| {
@@ -146,6 +149,7 @@ impl Handler {
             "sit" => sit(&ctx, &command).await,
             "rankings" => rank(&ctx, &command).await,
             "flip" => flip(ctx, &command).await,
+            "rectify" => rectify(ctx, &command).await,
             "birthday" => birthday(&ctx, &command).await,
             "clear_from" => clear_from(&ctx, &command).await,
             "autonick" => autonick(&ctx, &command).await,

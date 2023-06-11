@@ -1,4 +1,6 @@
+use std::convert::TryInto;
 use std::io::Cursor;
+use enum_utils::TryFromRepr;
 use image::{GenericImage,GenericImageView,DynamicImage,ImageResult,error,imageops::FilterType,Pixel,ImageOutputFormat};
 use rand::{distributions::Standard, prelude::Distribution, self, Rng};
 use serenity::builder::CreateEmbed;
@@ -24,6 +26,19 @@ pub enum JouchOrientation {
     RotatedRight,
 }
 
+impl JouchOrientation {
+    pub fn to_emotes(&self) -> &str {
+        match self {
+            JouchOrientation::Normal => "<:jouchup1:1117080763565879397><:jouchup2:1117080764572520449>",
+            JouchOrientation::UpsideDown => "<:jouchdn1:1117080756309721139><:jouchdn2:1117080758612410401> ",
+            JouchOrientation::RotatedLeft => "<:jouchl1:1117080760185270366>\n<:jouchl2:1117080761615519814>",
+            JouchOrientation::RotatedRight => "<:jouchr1:1117079201321861150>\n<:jouchr2:1117079202890530906>",
+        }
+    }
+}
+
+#[derive(TryFromRepr)]
+#[repr(u8)]
 enum RankSortBy {
     Sits,
     Flips,
@@ -301,11 +316,7 @@ pub async fn rank(ctx: &Context, command: &ApplicationCommandInteraction) -> Com
             users.push(user.to_owned());
         } else if let Some(CommandDataOptionValue::Integer(as_int)) = &arg.resolved {
             match arg.name.as_str() {
-                "sort" => sort_by = match as_int {
-                    0 => RankSortBy::Sits,
-                    1 => RankSortBy::Flips,
-                    _ => return Err("Invalid sort value passed!".into()),
-                },
+                "sort" => sort_by = (*as_int as u8).try_into().map_err(|_|{"Invalid sort value passed!".to_owned()})?,
                 _ => return Err(format!("Unknown/unimplemented option {}", arg.name).into()),
             };
         }
@@ -333,12 +344,7 @@ pub async fn flip(ctx: &Context, command: &ApplicationCommandInteraction) -> Com
         increment_flip_counter(db, &command.user, guild)?;
     }
 
-    let emote = match new_orientation {
-        JouchOrientation::Normal => "<:jouchup1:1117080763565879397><:jouchup2:1117080764572520449>",
-        JouchOrientation::UpsideDown => "<:jouchdn1:1117080756309721139><:jouchdn2:1117080758612410401> ",
-        JouchOrientation::RotatedLeft => "<:jouchl1:1117080760185270366>\n<:jouchl2:1117080761615519814>",
-        JouchOrientation::RotatedRight => "<:jouchr1:1117079201321861150>\n<:jouchr2:1117079202890530906>",
-    }.to_owned();
+    let emote = new_orientation.to_emotes().to_owned();
 
     command.edit_original_interaction_response(&ctx.http, |r| {
         r.content(emote + "︵╰(°□°╰)")
@@ -346,3 +352,25 @@ pub async fn flip(ctx: &Context, command: &ApplicationCommandInteraction) -> Com
 
     Ok(())
 }
+
+
+pub async fn rectify(ctx: &Context, command: &ApplicationCommandInteraction) -> CommandResult {
+    let new_orientation: JouchOrientation = JouchOrientation::Normal;
+
+    if let Some(guild) = command.guild_id {
+        let mut data = ctx.data.write().await;
+        let db = data.get_mut::<Db>().ok_or("Unable to get database")?;
+        db.update_guild(guild, |data|{
+            data.jouch_orientation = new_orientation;
+        })?;
+    }
+
+    let emote = new_orientation.to_emotes().to_owned();
+
+    command.edit_original_interaction_response(&ctx.http, |r| {
+        r.content(emote + "ノ( ˙ - ˙ ノ)")
+    }).await?;
+
+    Ok(())
+}
+
