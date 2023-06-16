@@ -210,8 +210,12 @@ impl EventHandler for Handler {
         tokio::spawn(check_birthdays_loop(ctx.clone()));
     }
     async fn message(&self, ctx: Context, msg: Message) {
-        if let Err(err) = canned_responses::process(&ctx, &msg).await {
-            println!("Error processing canned responses: {:?}", err);
+        // Ignore messages from bots to avoid risking an infinite response loop.
+        // (mainy concerned about ourself, but any bot in theory could cause one so best to just ignore all)
+        if !msg.author.bot {
+            if let Err(err) = canned_responses::process(&ctx, &msg).await {
+                println!("Error processing canned responses: {:?}", err);
+            }
         }
     }
 }
