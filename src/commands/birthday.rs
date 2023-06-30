@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::str::FromStr;
+use mongodb::bson::{doc, Bson, to_bson};
 use serenity::model::application::interaction::application_command::{ApplicationCommandInteraction, CommandDataOptionValue};
 use serenity::model::prelude::*;
 use serenity::prelude::*;
@@ -7,6 +8,7 @@ use serenity::utils::MessageBuilder;
 use chrono::{Duration, prelude::*};
 use serde::{Serialize, Deserialize};
 use enum_utils::FromStr;
+use anyhow::anyhow;
 use crate::db::{Db, UserKey, UserData};
 use crate::CommandResult;
 
@@ -80,21 +82,19 @@ pub fn parse_date(date_str: &str) -> CommandResult<DateTime<FixedOffset>> {
             }
         }
     }
-    Err(format!("Unable to parse date '{}'", date_str).into())
+    Err(anyhow!("Unable to parse date '{}'", date_str))
 }
 
 pub async fn clear_birthday(ctx: &Context, guild: GuildId, user: UserId) -> CommandResult<String> {    
     let mut data = ctx.data.write().await;
-    let db = data.get_mut::<Db>().ok_or("Unable to get database")?;
+    let db = data.get_mut::<Db>().ok_or(anyhow!("Unable to get database"))?;
 
     let key = UserKey { user, guild };
 
-    db.update(&key, |data| { 
-        data.birthday = None;
-    })?;
+    let user_data = db.update(&key, doc!{"$set": {"birthday": Bson::Null}}).await?;
 
     // try updating the user nickname but ignore if it fails.
-    let _ = check_nick_user(ctx, &key, db).await;
+    let _ = check_nick_user(ctx, &user_data).await;
 
     Ok(MessageBuilder::new()
         .push("Cleared birthday")
@@ -105,17 +105,14 @@ pub async fn set_birthday(ctx: &Context, guild: GuildId, user: UserId, date_str:
     let date = parse_date(date_str)?;
     
     let mut data = ctx.data.write().await;
-    let db = data.get_mut::<Db>().ok_or("Unable to get database")?;
+    let db = data.get_mut::<Db>().ok_or(anyhow!("Unable to get database"))?;
 
     let key = UserKey { user, guild };
 
-    db.update(&key, |data| { 
-        data.birthday = Some(date);
-        data.birthday_privacy = privacy;
-    })?;
+    let user_data = db.update(&key, doc!{ "$set": {"birthday": to_bson(&date)?, "birthday_privacy": to_bson(&privacy)?}}).await?;
 
     // try updating the user nickname but ignore if it fails.
-    let _ = check_nick_user(ctx, &key, db).await;
+    let _ = check_nick_user(ctx, &user_data).await;
 
     Ok(MessageBuilder::new()
         .push("Set birthday to ")
@@ -138,10 +135,14 @@ pub async fn is_birthday_today(ctx: &Context, user_key: UserKey) -> CommandResul
         return Ok(now.day() == bot_birthday.day() && now.month() == bot_birthday.month());
     }
     let data = ctx.data.read().await;
-    let db = data.get::<Db>().ok_or("Unable to get database")?;
-    Ok(db.read(&user_key, |user_data|{
-        birthday_date_check(now, user_data)
-    })?.unwrap_or_default())
+    let db = data.get::<Db>().ok_or(anyhow!("Unable to get database"))?;
+
+    if let Some(user_data) = db.read(&user_key).await? {
+        Ok(birthday_date_check(now, &user_data))
+    } else {
+        Ok(false)
+    }
+
 }
 
 pub async fn todays_birthdays(ctx: &Context, guild: GuildId) -> CommandResult<String> {
@@ -150,14 +151,14 @@ pub async fn todays_birthdays(ctx: &Context, guild: GuildId) -> CommandResult<St
     let mut birthday_count = 0;
 
     let data = ctx.data.read().await;
-    let db = data.get::<Db>().ok_or("Unable to get database")?;
+    let db = data.get::<Db>().ok_or(anyhow!("Unable to get database"))?;
     let now = Local::now();
-    db.foreach(guild, |user_id,user_data|{
+    db.foreach(guild, |user_data|{
         if birthday_date_check(now, user_data) {
-            message.mention(&UserId(*user_id));
+            message.mention(&user_data._id.user);
             birthday_count += 1;
         }
-    })?;
+    }).await?;
     let bot_birthday = get_bot_birthday();
     if now.day() == bot_birthday.day() && now.month() == bot_birthday.month() {
         message.mention(&ctx.cache.current_user_id());
@@ -193,8 +194,8 @@ pub async fn user_birthdays(ctx: &Context, guild: GuildId, users: &Vec<User>) ->
         };
 
         let data = ctx.data.read().await;
-        let db = data.get::<Db>().ok_or("Unable to get database")?;
-        db.read(&key, |user_data|{
+        let db = data.get::<Db>().ok_or(anyhow!("Unable to get database"))?;
+        if let Some(user_data) = db.read(&key).await? {
             match user_data.birthday {
                 Some(birthday) => {
                     if now.day() == birthday.day() && now.month() == birthday.month() && user_data.birthday_privacy != Some(BirthdayPrivacy::Private) {
@@ -209,7 +210,9 @@ pub async fn user_birthdays(ctx: &Context, guild: GuildId, users: &Vec<User>) ->
                     message.push_line("not set");
                 },
             }
-        })?;
+        } else {
+            message.push_line("not set");
+        }
     }
     Ok(message.build())
 }
@@ -220,7 +223,7 @@ pub async fn check_birthdays_loop(ctx: Context) {
         let guilds = {
             let data = ctx.data.read().await;
             if let Some(db) = data.get::<Db>() {
-                db.get_guilds().unwrap_or_default()
+                db.get_guilds().await.unwrap_or_default()
             } else {
                 println!("error getting database");
                 HashSet::new()
@@ -230,11 +233,11 @@ pub async fn check_birthdays_loop(ctx: Context) {
             let (announce_channel, announce_when_none) = {
                 let data = ctx.data.read().await;
                 if let Some(db) = data.get::<Db>() {
-                    let data = db.read_guild(*guild, |guild_data|{
-                        (guild_data.birthday_announce_channel, guild_data.birthday_announce_when_none)
-                    });
-                    match data {
-                        Ok(data) => data.unwrap_or_default(),
+                    match db.read_guild(*guild).await {
+                        Ok(data) =>
+                            data.map(|guild_data|{
+                                (guild_data.birthday_announce_channel, guild_data.birthday_announce_when_none)
+                            }).unwrap_or_default(),
                         Err(err) => {
                             println!("error getting guild data for guild {}; {:?}", guild, err);
                             (None, None)
@@ -274,7 +277,7 @@ pub async fn check_birthdays_loop(ctx: Context) {
 
 pub async fn birthday(ctx: &Context, command: &ApplicationCommandInteraction) -> CommandResult {
     if let Some(subcommand) = command.data.options.get(0) {
-        let guild = command.guild_id.ok_or("Unable to get guild where command was sent")?;
+        let guild = command.guild_id.ok_or(anyhow!("Unable to get guild where command was sent"))?;
         match subcommand.name.as_str() {
             "set" => {
                 if let Some(date_arg) = subcommand.options.first() {
@@ -297,7 +300,7 @@ pub async fn birthday(ctx: &Context, command: &ApplicationCommandInteraction) ->
                         return Ok(())
                     }
                 }
-                Err("No date argument passed".into())
+                Err(anyhow!("No date argument passed"))
             },
             "clear" => {
                 let response = clear_birthday(ctx, guild, command.user.id).await?;
@@ -330,10 +333,10 @@ pub async fn birthday(ctx: &Context, command: &ApplicationCommandInteraction) ->
                 Ok(())
             }
             _ => {
-                Err(format!("Unknown option {}", subcommand.name).into())
+                Err(anyhow!("Unknown option {}", subcommand.name))
             }
         }
     } else {
-        Err("Please provide a valid subcommand".into())
+        Err(anyhow!("Please provide a valid subcommand"))
     }
 }

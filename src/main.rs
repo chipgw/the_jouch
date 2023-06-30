@@ -2,8 +2,21 @@ mod canned_responses;
 mod commands;
 mod db;
 mod config;
-use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
 
+use std::path::PathBuf;
+use std::iter::FromIterator;
+
+use anyhow::anyhow;
+use commands::db_migration::migrate;
+use mongodb::Database;
+use serenity::model::Permissions;
+use serenity::prelude::TypeMapKey;
+use shuttle_persist::PersistInstance;
+use shuttle_runtime;
+use shuttle_serenity::ShuttleSerenity;
+use shuttle_secrets::SecretStore;
+use shuttle_static_folder;
+use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
 use serenity::{async_trait, client::{Client, Context, EventHandler}, model::{
         channel::Message, gateway::Ready, id::GuildId,
         application::{
@@ -21,9 +34,7 @@ use serenity::{async_trait, client::{Client, Context, EventHandler}, model::{
 
 use commands::{autonick::*, birthday::*, clear::*, sit::*};
 
-// same as in serenety::framework::standard, but we otherwise don't want framework any more so redefine here
-pub type CommandError = Box<dyn std::error::Error + Send + Sync>;
-pub type CommandResult<T = ()> = Result<T, CommandError>;
+pub type CommandResult<T = ()> = anyhow::Result<T>;
 
 struct Handler;
 
@@ -152,8 +163,9 @@ impl Handler {
             "rectify" => rectify(ctx, &command).await,
             "birthday" => birthday(&ctx, &command).await,
             "clear_from" => clear_from(&ctx, &command).await,
+            "migrate" => migrate(&ctx, &command).await,
             "autonick" => autonick(&ctx, &command).await,
-            _ => Err("not implemented :(".into()),
+            _ => Err(anyhow!("not implemented :(")),
         };
 
         if let Err(content) = content {
@@ -175,35 +187,48 @@ impl EventHandler for Handler {
             }
         }
     }
+
     async fn ready(&self, ctx: Context, ready: Ready) {
         println!("{} is connected!", ready.user.name);
 
+        let commands = Command::set_global_application_commands(&ctx.http, Handler::create_commands).await;
+
+        println!("I now have the following slash commands: {:#?}", commands);
+
         let data = ctx.data.read().await;
-        let testing_guild = if let Some(config) = data.get::<config::Config>() {
-            config.testing_guild_id
+        
+        let testing_guild = if let Some(shuttle_items) = data.get::<ShuttleItemsContainer>() {
+            shuttle_items.secret_store.get("test_guild").and_then(|id|{id.parse::<u64>().ok()})
         } else {
             None
         };
+        println!("testing guild: {:?}", testing_guild);
 
-        let commands = if let Some(guild_id) = testing_guild {
+        if let Some(guild_id) = testing_guild {
             if let Some(guild) = ctx.cache.guild(guild_id) {
-                guild.set_application_commands(&ctx.http, |commands| {
+                let commands = guild.set_application_commands(&ctx.http, |commands| {
                     Handler::create_commands(commands);
 
                     // only available in testing
                     commands.create_application_command(|command| {
-                        command.name("clear_from").kind(CommandType::Message)
-                    })
-                }).await
-            } else {
-                Command::set_global_application_commands(&ctx.http, Handler::create_commands).await
+                        command.name("clear_from").kind(CommandType::Message).default_member_permissions(Permissions::ADMINISTRATOR)
+                    });
+                    commands.create_application_command(|command| {
+                        command.name("migrate").default_member_permissions(Permissions::ADMINISTRATOR);
+                        command.description("Migrate data from Ron files to the new MongoDB storage.");
+                        command.create_option(|o|{
+                            o.kind(CommandOptionType::Attachment).name("jouch_db").description("a jouch_db.ron file from prior to the MongoDB switch.")
+                        }).create_option(|o|{
+                            o.kind(CommandOptionType::Attachment).name("config").description("a config.ron file from prior to the MongoDB switch.")
+                        })
+                    });
+                    commands
+                }).await;
+                println!("I also have testing guild ({:?}) specific slash commands: {:#?}", testing_guild, commands);
             }
-        } else {
-            Command::set_global_application_commands(&ctx.http, Handler::create_commands).await
-        };
-
-        println!("I now have the following slash commands: {:#?}", commands);
+        }
     }
+
     async fn cache_ready(&self, ctx: Context, _guilds: Vec<GuildId>) {
         // Spawn the nickname & birthday checkers.
         tokio::spawn(check_nicks_loop(ctx.clone()));
@@ -220,35 +245,54 @@ impl EventHandler for Handler {
     }
 }
 
-#[tokio::main]
-async fn main() {
-    let config = config::Config::load().expect("Unable to init config!");
-    // make sure config file is created.
-    config.save().expect("Unable to save config file!");
-
-    if config.token.is_empty() || config.app_id == 0 {
-        println!("Please fill out token & app id in config.ron");
-        return;
+macro_rules! outer {
+    ($($tts:tt)*) => {
+        shuttle_runtime::Error::Custom(anyhow!($($tts)*))
     }
+}
+
+struct ShuttleItemsContainer {
+    secret_store: SecretStore,
+    assets_dir: PathBuf,
+    persist: PersistInstance,
+}
+
+impl TypeMapKey for ShuttleItemsContainer {
+    type Value = ShuttleItemsContainer;
+}
+
+#[shuttle_runtime::main]
+async fn serenity(
+    #[shuttle_secrets::Secrets] secret_store: SecretStore,
+    #[shuttle_static_folder::StaticFolder(folder = "assets")] assets_dir: PathBuf,
+    #[shuttle_shared_db::MongoDb] db: Database,
+    #[shuttle_persist::Persist] persist: PersistInstance
+) -> ShuttleSerenity {
+    let token = secret_store.get("discord_token").ok_or(outer!("Unable to load token from secret store!"))?;
+    let app_id = secret_store.get("app_id").ok_or(outer!("Unable to load app id from secret store!"))?;
+    let app_id = app_id.parse::<u64>().map_err(|e|{outer!("Unable to parse app id from secret store! {}", e)})?;
 
     const INTENTS: GatewayIntents = GatewayIntents::all().difference(GatewayIntents::GUILD_PRESENCES);
 
     // Login with a bot token from the configuration file
-    let mut client = Client::builder(config.token.as_str(), INTENTS)
+    let client = Client::builder(token.as_str(), INTENTS)
         .event_handler(Handler)
-        .application_id(config.app_id)
+        .application_id(app_id)
         .await
         .expect("Error creating client");
 
+    let config = config::Config::load(&persist)?;
+
+    let shuttle_items = ShuttleItemsContainer {
+        secret_store, assets_dir, persist
+    };
+
     {
         let mut data = client.data.write().await;
-        data.insert::<db::Db>(db::Db::new().expect("Unable to init database!"));
+        data.insert::<db::Db>(db::Db::new(db));
         data.insert::<config::Config>(config);
+        data.insert::<ShuttleItemsContainer>(shuttle_items);
     }
-
-    // start listening for events by starting a single shard
-    if let Err(why) = client.start().await {
-        println!("An error occurred while running the client: {:?}", why);
-    }
+    
+    Ok(client.into())
 }
-

@@ -2,6 +2,7 @@ use std::convert::TryInto;
 use std::io::Cursor;
 use enum_utils::TryFromRepr;
 use image::{GenericImage,GenericImageView,DynamicImage,ImageResult,error,imageops::FilterType,Pixel,ImageOutputFormat};
+use mongodb::bson::{doc, to_bson};
 use rand::{distributions::Standard, prelude::Distribution, self, Rng};
 use serenity::builder::CreateEmbed;
 use serenity::model::application::interaction::application_command::{ApplicationCommandInteraction, CommandDataOptionValue};
@@ -10,9 +11,10 @@ use serenity::prelude::*;
 use serde::{Serialize, Deserialize};
 use serenity::utils::MessageBuilder;
 use crate::db::{Db, UserKey};
-use crate::CommandResult;
-use super::autonick::check_nick_user;
+use crate::{CommandResult, ShuttleItemsContainer};
+use super::autonick::check_nick_user_key;
 use super::birthday::is_birthday_today;
+use anyhow::anyhow;
 
 const SIT_ONE: (u32, u32) = (385, 64);
 const SIT_WITH: (u32, u32, u32, u32) = (240, 64, 580, 64);
@@ -97,54 +99,51 @@ fn blend(target: &mut DynamicImage, source: &DynamicImage, x: u32, y: u32, circl
     Ok(())
 }
 
-pub fn increment_sit_counter(db: &mut Db, user: &User, guild: GuildId) -> CommandResult {
+pub async fn increment_sit_counter(db: &mut Db, user: &User, guild: GuildId) -> CommandResult {
     let key = UserKey {
         user: user.id,
         guild,
     };
-
-    db.update(&key, |data| { 
-        data.sit_count = Some(data.sit_count.unwrap_or_default() + 1);
-    })?;
+    let sit_count = db.read(&key).await?.and_then(|data|{data.sit_count});
+    db.update(&key, doc!{"$set": {"sit_count": sit_count.unwrap_or_default() + 1}}).await?;
 
     Ok(())
 }
 
-pub fn increment_flip_counter(db: &mut Db, user: &User, guild: GuildId) -> CommandResult {
+pub async fn increment_flip_counter(db: &mut Db, user: &User, guild: GuildId) -> CommandResult {
     let key = UserKey {
         user: user.id,
         guild,
     };
 
-    db.update(&key, |data| { 
-        data.flip_count = Some(data.flip_count.unwrap_or_default() + 1);
-    })?;
+    let flip_count = db.read(&key).await?.and_then(|data|{data.flip_count});
+    db.update(&key, doc!{"$set": {"flip_count": flip_count.unwrap_or_default() + 1}}).await?;
 
     Ok(())
 }
 
 struct RankingData {
     name: String,
-    sit_count: Option<u64>,
-    flip_count: Option<u64>,
+    sit_count: Option<i64>,
+    flip_count: Option<i64>,
 }
 
 async fn sit_check(ctx: &Context, user: &User, guild: Option<GuildId>, users: &Vec<User>, sort_by: RankSortBy) -> CommandResult<CreateEmbed> {
     let data = ctx.data.read().await;
-    let db = data.get::<Db>().ok_or("Unable to get database")?;
+    let db = data.get::<Db>().ok_or(anyhow!("Unable to get database"))?;
 
     // Name, sit_count, flip_count
     let mut sit_data: Vec<RankingData> = Vec::new();
 
     let title = if let Some(guild) = guild {
         if users.is_empty() {
-            let users = db.get_users(guild)?;
+            let mut users = db.get_users(guild).await?;
 
-            for user_key in &users {
-                let (sit_count, flip_count) = db.read(user_key, |data|{ (data.sit_count, data.flip_count) })?.unwrap_or_default();
-                let user = user_key.user.to_user(ctx).await?;
+            while users.advance().await? {
+                let user_data = users.deserialize_current()?;
+                let user = user_data._id.user.to_user(ctx).await?;
                 let name = user.nick_in(ctx, guild).await.unwrap_or(user.name);
-                sit_data.push(RankingData{name, sit_count, flip_count});
+                sit_data.push(RankingData{name, sit_count: user_data.sit_count, flip_count: user_data.flip_count});
             };
 
             let sort_func: fn(&RankingData, &RankingData) -> std::cmp::Ordering = match sort_by {
@@ -162,19 +161,19 @@ async fn sit_check(ctx: &Context, user: &User, guild: Option<GuildId>, users: &V
                     guild,
                 };
                 let name = user.nick_in(ctx, guild).await.unwrap_or(user.name.clone());
-                let (sit_count, flip_count) = db.read(&key, |data| {
+                let (sit_count, flip_count) = db.read(&key).await?.map(|data| {
                     (data.sit_count, data.flip_count)
-                })?.unwrap_or_default();
+                }).unwrap_or_default();
                 sit_data.push(RankingData{name, sit_count, flip_count});
             }
             "Sit Data For Users"
         }
     } else {
-        let guilds = db.get_guilds()?;
+        let guilds = db.get_guilds().await?;
 
         for guild in guilds {
             let user_key = UserKey { user: user.id, guild };
-            let (sit_count, flip_count) = db.read(&user_key, |data|{ (data.sit_count, data.flip_count) })?.unwrap_or_default();
+            let (sit_count, flip_count) = db.read(&user_key).await?.map(|data|{ (data.sit_count, data.flip_count) }).unwrap_or_default();
                 let name = if let Some(name) = guild.name(&ctx.cache) {
                     name
                 } else {
@@ -208,15 +207,19 @@ async fn sit_check(ctx: &Context, user: &User, guild: Option<GuildId>, users: &V
 }
 
 async fn sit_internal(ctx: &Context, user: &User, guild: Option<GuildId>, with: Option<&User>) -> CommandResult<Vec<u8>> {
+    let assets_dir = {
+        ctx.data.read().await.get::<ShuttleItemsContainer>().ok_or(anyhow!("Unable to get config!"))?.assets_dir.clone()
+    };
+
     let base_image_path = if with.is_some() {
-        "assets/jouch-0002.png"
+        assets_dir.join("jouch-0002.png")
     } else {
-        "assets/jouch-0001.png"
+        assets_dir.join("jouch-0001.png")
     };
 
     let mut base_image = image::io::Reader::open(base_image_path)?.decode()?;
 
-    let party_hat_image = image::io::Reader::open("assets/party-hat-0001.png")?.decode()?;
+    let party_hat_image = image::io::Reader::open(assets_dir.join("party-hat-0001.png"))?.decode()?;
 
     let user_avatar = get_face(ctx, user, guild).await?;
 
@@ -247,10 +250,11 @@ async fn sit_internal(ctx: &Context, user: &User, guild: Option<GuildId>, with: 
     // rotate output image based on current orientation in guild
     let orientation = if let Some(guild) = guild {
         let data = ctx.data.read().await;
-        let db = data.get::<Db>().ok_or("Unable to get database")?;
-        db.read_guild(guild, |data|{
+        let db = data.get::<Db>().ok_or(anyhow!("Unable to get database"))?;
+        // Not critical; don't raise an error if it isn't available.
+        db.read_guild(guild).await.unwrap_or_default().map(|data|{
             data.jouch_orientation
-        }).unwrap_or_default().unwrap_or_default() // Not critical; don't raise an error if it isn't available.
+        }).unwrap_or_default()
     } else {
         Default::default()
     };
@@ -266,12 +270,12 @@ async fn sit_internal(ctx: &Context, user: &User, guild: Option<GuildId>, with: 
 
     if let Some(guild) = guild {
         let mut data = ctx.data.write().await;
-        let db = data.get_mut::<Db>().ok_or("Unable to get database")?;
-        increment_sit_counter(db, user, guild)?;
-        let _ = check_nick_user(ctx, &UserKey { user: user.id, guild }, db).await;
+        let db = data.get_mut::<Db>().ok_or(anyhow!("Unable to get database"))?;
+        increment_sit_counter(db, user, guild).await?;
+        let _ = check_nick_user_key(ctx, &UserKey { user: user.id, guild }, db).await;
         if let Some(user) = with {
-            increment_sit_counter(db, user, guild)?;
-            let _ = check_nick_user(ctx, &UserKey { user: user.id, guild }, db).await;
+            increment_sit_counter(db, user, guild).await?;
+            let _ = check_nick_user_key(ctx, &UserKey { user: user.id, guild }, db).await;
         }
     }
 
@@ -292,7 +296,7 @@ pub async fn sit(ctx: &Context, command: &ApplicationCommandInteraction) -> Comm
 
             Ok(())
         } else {
-            Err("Couldn't find your friend! (Argument invalid)".into())
+            Err(anyhow!("Couldn't find your friend! (Argument invalid)"))
         }
     } else {
         let image_bytes = sit_internal(ctx, &command.user, command.guild_id, None).await?;
@@ -316,8 +320,8 @@ pub async fn rank(ctx: &Context, command: &ApplicationCommandInteraction) -> Com
             users.push(user.to_owned());
         } else if let Some(CommandDataOptionValue::Integer(as_int)) = &arg.resolved {
             match arg.name.as_str() {
-                "sort" => sort_by = (*as_int as u8).try_into().map_err(|_|{"Invalid sort value passed!".to_owned()})?,
-                _ => return Err(format!("Unknown/unimplemented option {}", arg.name).into()),
+                "sort" => sort_by = (*as_int as u8).try_into().map_err(|_|{anyhow!("Invalid sort value passed!")})?,
+                _ => return Err(anyhow!("Unknown/unimplemented option {}", arg.name).into()),
             };
         }
     }
@@ -337,11 +341,11 @@ pub async fn flip(ctx: &Context, command: &ApplicationCommandInteraction) -> Com
 
     if let Some(guild) = command.guild_id {
         let mut data = ctx.data.write().await;
-        let db = data.get_mut::<Db>().ok_or("Unable to get database")?;
-        db.update_guild(guild, |data|{
-            data.jouch_orientation = new_orientation;
-        })?;
-        increment_flip_counter(db, &command.user, guild)?;
+        let db = data.get_mut::<Db>().ok_or(anyhow!("Unable to get database"))?;
+        increment_flip_counter(db, &command.user, guild).await?;
+        db.update_guild(guild, doc!{
+            "$set": {"jouch_orientation": to_bson(&new_orientation)?}
+        }).await?;
     }
 
     let emote = new_orientation.to_emotes().to_owned();
@@ -359,10 +363,10 @@ pub async fn rectify(ctx: &Context, command: &ApplicationCommandInteraction) -> 
 
     if let Some(guild) = command.guild_id {
         let mut data = ctx.data.write().await;
-        let db = data.get_mut::<Db>().ok_or("Unable to get database")?;
-        db.update_guild(guild, |data|{
-            data.jouch_orientation = new_orientation;
-        })?;
+        let db = data.get_mut::<Db>().ok_or(anyhow!("Unable to get database"))?;
+        db.update_guild(guild, doc!{
+            "$set": {"jouch_orientation": to_bson(&new_orientation)?}
+        }).await?;
     }
 
     let emote = new_orientation.to_emotes().to_owned();

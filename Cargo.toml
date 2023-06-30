@@ -8,15 +8,22 @@ edition = "2018"
 
 [dependencies]
 # use default features minus framework & standard_framework
-serenity = { version = "0.11", default-features = false, features = ["builder", "cache", "client", "gateway", "http", "model", "utils", "rustls_backend"] }
+serenity = { version = "0.11", default-features = false, features = ["builder", "cache", "client", "collector", "gateway", "http", "model", "utils", "rustls_backend"] }
 tokio = "1.28"
 mini-redis = "*"
 chrono = { version ="0.4", features = ["serde"] }
 serde = "1.0"
-rustbreak = { version = "2", features = ["ron_enc"] }
 ron = "*"
 image = "0.24"
 webp = { version = "0.2", features = ["img"] }
 reqwest = "*"
 enum-utils = "0.1"
 rand="*"
+shuttle-runtime = "0.20"
+shuttle-serenity = "0.20"
+shuttle-secrets = "0.20"
+shuttle-static-folder = "0.20"
+shuttle-shared-db = { version = "0.20", features = ["mongodb"] }
+shuttle-persist = "0.20"
+mongodb = { version = "*" }
+anyhow = "*"

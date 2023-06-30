@@ -1,8 +1,9 @@
 use std::convert::TryFrom;
 use serenity::{model::channel::{Message, ReactionType}, prelude::*};
 use serde::{Deserialize, Serialize};
-use crate::CommandResult;
+use anyhow::anyhow;
 
+use crate::CommandResult;
 use crate::{config::Config, db::Db};
 
 #[derive(Eq, PartialEq, Serialize, Deserialize, Clone, Debug)]
@@ -77,8 +78,8 @@ async fn handle_responses(responses: Vec<Response>, ctx: &Context, msg: &Message
 
 pub async fn process(ctx: &Context, msg: &Message) -> CommandResult {
     let data = ctx.data.read().await;
-    let db = data.get::<Db>().ok_or("Unable to get database")?;
-    let config = data.get::<Config>().ok_or("Unable to get config")?;
+    let db = data.get::<Db>().ok_or(anyhow!("Unable to get database"))?;
+    let config = data.get::<Config>().ok_or(anyhow!("Unable to get config"))?;
 
     let message_lower = msg.content.to_lowercase();
     let words = message_lower
@@ -87,11 +88,11 @@ pub async fn process(ctx: &Context, msg: &Message) -> CommandResult {
         .collect();
 
     if let Some(guild) = msg.guild_id {
-        let result = db.read_guild(guild, |guild| {
+        let result = db.read_guild(guild).await?.and_then(|guild| {
             guild.canned_response_table.as_ref().map(|table|{
                 table.process(&words)
             })
-        })?.unwrap_or_default();
+        });
 
         if let Some(responses) = result {
             return handle_responses(responses, ctx, msg).await;

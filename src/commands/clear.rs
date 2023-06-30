@@ -1,6 +1,7 @@
 
 use serenity::model::application::interaction::application_command::{ApplicationCommandInteraction, ResolvedTarget};
 use serenity::prelude::*;
+use anyhow::anyhow;
 
 pub async fn clear_from(ctx: &Context, command: &ApplicationCommandInteraction) -> crate::CommandResult<()> {
     if let Some(ResolvedTarget::Message(ref msg)) = command.data.target() {
@@ -13,6 +14,6 @@ pub async fn clear_from(ctx: &Context, command: &ApplicationCommandInteraction) 
 
         Ok(())
     } else {
-        Err("Message not a reply to starting message".into())
+        Err(anyhow!("Message not a reply to starting message"))
     }
 }

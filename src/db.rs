@@ -1,114 +1,123 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use chrono::{DateTime, FixedOffset};
-use rustbreak::{deser::Ron, PathDatabase, error};
+use mongodb::bson::{Document, doc};
+use mongodb::options::UpdateModifications;
+use mongodb::{Collection, Database, Cursor};
 use serenity::prelude::TypeMapKey;
 use serenity::model::id::{UserId,GuildId};
 use serde::{Serialize, Deserialize};
-use crate::CommandResult;
+use anyhow::anyhow;
 
 use crate::{commands::{sit::JouchOrientation, birthday::BirthdayPrivacy}, canned_responses::ResponseTable};
 
-type DbData = HashMap<u64, GuildData>;
-type DbType = PathDatabase<DbData, Ron>;
-
-#[derive(Eq, PartialEq, Debug, Serialize, Deserialize, Clone, Default, Hash)]
+#[derive(Eq, PartialEq, Debug, Serialize, Deserialize, Clone, Default)]
 pub struct UserKey {
+    pub guild: GuildId,
     pub user: UserId,
+}
+
+#[derive(Eq, PartialEq, Debug, Serialize, Deserialize, Clone, Default)]
+pub struct GuildKey { 
     pub guild: GuildId,
 }
 
+impl Into<Document> for &GuildKey {
+    fn into(self) -> Document {
+        doc!{"_id.guild": self.guild.0.to_string()}
+    }
+}
+
+impl Into<Option<Document>> for &GuildKey {
+    fn into(self) -> Option<Document> {
+        Some(self.into())
+    }
+}
+
+impl Into<Document> for &UserKey {
+    fn into(self) -> Document {
+        doc!{"_id": {"guild": self.guild.0.to_string(), "user": self.user.0.to_string()}}
+    }
+}
+impl Into<Option<Document>> for &UserKey {
+    fn into(self) -> Option<Document> {
+        Some(self.into())
+    }
+}
+
 pub struct Db {
-    db: DbType,
+    _db: Database,
+    user_collection: Collection<UserData>,
+    guild_collection: Collection<GuildData>,
 }
 
 impl Db {
-    pub fn new() -> error::Result<Db> {
-        Ok(Db { 
-            db: DbType::load_from_path_or_default("jouch_db.ron".into())?,
-        })
+    pub fn new(database: Database) -> Db {
+        Db {
+            user_collection: database.collection("users"),
+            guild_collection: database.collection("guilds"),
+            _db: database,
+        }
     }
 
-    pub fn update<T, R>(&mut self, user_key: &UserKey, task: T) -> error::Result<R> 
+    pub async fn update<T>(&mut self, user_key: &UserKey, task: T) -> anyhow::Result<UserData> 
     where 
-        T: FnOnce(&mut UserData) -> R
+        T: Into<UpdateModifications>
     {
-        let r = self.db.write(|db| { 
-            let guild_entry = db.entry(user_key.guild.into()).or_default();
-            let user_entry = guild_entry.users.entry(user_key.user.into()).or_default();
-            task(user_entry)
-        })?;
-        self.db.save()?;
-        Ok(r)
-    }
-
-    pub fn update_guild<T, R>(&mut self, guild: GuildId, task: T) -> error::Result<R> 
-    where 
-        T: FnOnce(&mut GuildData) -> R
-    {
-        let r = self.db.write(|db| { 
-            let guild_entry = db.entry(guild.into()).or_default();
-            task(guild_entry)
-        })?;
-        self.db.save()?;
-        Ok(r)
-    }
-
-    pub fn read_guild<T, R>(&self, guild: GuildId, task: T) -> error::Result<Option<R>> 
-    where 
-        T: FnOnce(&GuildData) -> R
-    {
-        Ok(self.db.read(|db| { 
-            if let Some(guild_entry) = db.get(&guild.into()) {
-                return Some(task(guild_entry));
-            }
-            return None;
-        })?)
-    }
-
-    pub fn read<T, R>(&self, user_key: &UserKey, task: T) -> error::Result<Option<R>> 
-    where 
-        T: FnOnce(&UserData) -> R
-    {
-        Ok(self.db.read(|db| { 
-            if let Some(guild_entry) = db.get(&user_key.guild.into()) {
-                if let Some(user_entry) = guild_entry.users.get(&user_key.user.into()) {
-                    return Some(task(user_entry));
-                }
-            }
-            return None;
-        })?)
-    }
-
-    pub fn get_users(&self, guild: GuildId) -> CommandResult<HashSet<UserKey>> {
-        self.db.read(|db| {
-            let guild_entry = db.get(&guild.into()).ok_or("Unable to find guild in database")?;
+        if self.user_collection.find_one(user_key, None).await?.is_none() {
+            let new_user_data = UserData::default_with_key(user_key);
             
-            Ok(guild_entry.users.keys().map(|u|{
-                UserKey {
-                    user: (*u).into(), 
-                    guild,
-                }
-            }).collect())
-        })?
+            self.user_collection.insert_one(new_user_data, None).await?;
+        };
+        
+        self.user_collection.update_one(user_key.into(), task, None).await?;
+
+        self.user_collection.find_one(user_key, None).await?.ok_or(anyhow!("error getting user after update!"))
     }
 
-    pub fn get_guilds(&self) -> CommandResult<HashSet<GuildId>> {
-        self.db.read(|db| {
-            Ok(db.keys().map(|g|{(*g).into()}).collect())
-        })?
-    }
-
-    pub fn foreach<T>(&self, guild: GuildId, mut task: T) -> error::Result<()> 
+    pub async fn update_guild<T>(&mut self, guild: GuildId, task: T) -> anyhow::Result<GuildData>
     where 
-        T: FnMut(&u64, &UserData)
+        T: Into<UpdateModifications>
     {
-        Ok(self.db.read(|db| {
-            if let Some(guild_entry) = db.get(&guild.into()) {
-                for (user_key, user_data) in &guild_entry.users {
-                    task(&user_key,&user_data);
-                }
-            }
-        })?)
+        let ref guild_key = GuildKey{guild};
+
+        if self.guild_collection.find_one(guild_key, None).await?.is_none() {
+            let new_guild_data = GuildData::default_with_key(&guild_key);
+            
+            self.guild_collection.insert_one(new_guild_data, None).await?;
+        };
+        
+        self.guild_collection.update_one(guild_key.into(), task, None).await?;
+
+        self.guild_collection.find_one(guild_key, None).await?.ok_or(anyhow!("error getting guild after update!"))
+    }
+
+    pub async fn read_guild(&self, guild: GuildId) -> anyhow::Result<Option<GuildData>> {
+        Ok(self.guild_collection.find_one(&GuildKey{guild}, None).await?)
+    }
+
+    pub async fn read(&self, user_key: &UserKey) -> anyhow::Result<Option<UserData>> {
+        Ok(self.user_collection.find_one(user_key, None).await?)
+    }
+
+    pub async fn get_users(&self, guild: GuildId) -> anyhow::Result<Cursor<UserData>> {
+        Ok(self.user_collection.find(&GuildKey{guild}, None).await?)
+    }
+
+    pub async fn get_guilds(&self) -> anyhow::Result<HashSet<GuildId>> {
+        let v = self.guild_collection.distinct("guild_id", None, None).await?;
+        Ok(v.iter().map(|a|{(a.as_i64().unwrap() as u64).into()}).collect())
+    }
+
+    pub async fn foreach<T>(&self, guild: GuildId, mut task: T) -> anyhow::Result<()> 
+    where 
+        T: FnMut(&UserData)
+    {
+        let mut users = self.user_collection.find(&GuildKey{guild}, None).await?;
+        while users.advance().await? {
+            let user_data = users.deserialize_current()?;
+            task(&user_data);
+        };
+        Ok(())
     }
 }
 
@@ -118,27 +127,38 @@ impl TypeMapKey for Db {
 
 #[derive(Eq, PartialEq, Debug, Serialize, Deserialize, Clone, Default)]
 pub struct UserData {
-    #[serde(skip_serializing_if = "Option::is_none")]
+    pub _id: UserKey,
     pub birthday: Option<DateTime<FixedOffset>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub birthday_privacy: Option<BirthdayPrivacy>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_nick: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sit_count: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub flip_count: Option<u64>,
+    pub sit_count: Option<i64>,
+    pub flip_count: Option<i64>,
+}
+
+impl UserData {
+    pub fn default_with_key(user_key: &UserKey) -> Self {
+        Self {
+            _id: user_key.clone(),
+            ..Default::default()
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct GuildData {
-    pub users: HashMap<u64,UserData>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    pub _id: GuildKey,
     pub birthday_announce_channel: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub birthday_announce_when_none: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub canned_response_table: Option<ResponseTable>,
     #[serde(default)]
     pub jouch_orientation: JouchOrientation,
+}
+
+impl GuildData {
+    pub fn default_with_key(guild_key: &GuildKey) -> Self {
+        Self {
+            _id: guild_key.clone(),
+            ..Default::default()
+        }
+    }
 }
