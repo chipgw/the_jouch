@@ -1,0 +1,5 @@
+.git/
+assets/*
+!assets/jouch-0001.png
+!assets/jouch-0002.png
+!assets/party-hat-0001.png

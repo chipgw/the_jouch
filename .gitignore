@@ -1,6 +1,5 @@
 /target
-jouch_db.ron
-config.ron
+*.ron
 *.blend1
 
 Secrets.dev.toml
