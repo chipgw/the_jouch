@@ -6,6 +6,7 @@ use serenity::{model::{id::{UserId,GuildId}, application::interaction::applicati
 use serde::{Serialize, Deserialize};
 use ron::de::from_bytes;
 use anyhow::anyhow;
+use tracing::debug;
 use crate::{commands::{sit::JouchOrientation, birthday::BirthdayPrivacy}, canned_responses::ResponseTable, db::{Db, UserKey}, ShuttleItemsContainer};
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -105,17 +106,22 @@ pub async fn migrate(ctx: &Context, command: &ApplicationCommandInteraction) -> 
                     let old_config: Config = from_bytes(&data)?;
                     
                     let mut data = ctx.data.write().await;
+                    
                     {
                         let config = data.get_mut::<crate::config::Config>().ok_or(anyhow!("Unable to get config"))?;
+
                         config.canned_response_table = old_config.canned_response_table;
                         config.nick_interval = old_config.nick_interval;
                     }
 
-                        let config = data.get::<crate::config::Config>().ok_or(anyhow!("Unable to get config"))?;
+                    let config = data.get::<crate::config::Config>().ok_or(anyhow!("Unable to get config"))?;
                     let shuttle_items = data.get::<ShuttleItemsContainer>().ok_or(anyhow!("Unable to get ShuttleItemsContainer!"))?;
+
+                    debug!("Updated Config to: {:#?}", config);
 
                     config.save(&shuttle_items.persist)?;
 
+                    debug!("Config as saved in shuttle persisted storage: {:#?}", crate::config::Config::load(&shuttle_items.persist));
                 },
                 _ => bail!("option {} not recognized!", arg.name),
             }

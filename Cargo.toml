@@ -27,3 +27,4 @@ shuttle-shared-db = { version = "0.20", features = ["mongodb"] }
 shuttle-persist = "0.20"
 mongodb = { version = "*" }
 anyhow = "*"
+tracing = "*"

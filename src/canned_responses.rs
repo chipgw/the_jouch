@@ -2,6 +2,7 @@ use std::convert::TryFrom;
 use serenity::{model::channel::{Message, ReactionType}, prelude::*};
 use serde::{Deserialize, Serialize};
 use anyhow::anyhow;
+use tracing::error;
 
 use crate::CommandResult;
 use crate::{config::Config, db::Db};
@@ -69,7 +70,7 @@ async fn handle_responses(responses: Vec<Response>, ctx: &Context, msg: &Message
         };
         // handle the error here so we can continue to go through any other responses
         if let Some(err) = result {
-            println!("Error processing canned response {:?}: {:?}", response, err);
+            error!("Error processing canned response {:?}: {:?}", response, err);
         }
     }
 

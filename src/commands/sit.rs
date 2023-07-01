@@ -174,12 +174,12 @@ async fn sit_check(ctx: &Context, user: &User, guild: Option<GuildId>, users: &V
         for guild in guilds {
             let user_key = UserKey { user: user.id, guild };
             let (sit_count, flip_count) = db.read(&user_key).await?.map(|data|{ (data.sit_count, data.flip_count) }).unwrap_or_default();
-                let name = if let Some(name) = guild.name(&ctx.cache) {
-                    name
-                } else {
-                    guild.to_partial_guild(&ctx.http).await?.name
-                };
-                sit_data.push(RankingData{name, sit_count, flip_count});
+            let name = if let Some(name) = guild.name(&ctx.cache) {
+                name
+            } else {
+                guild.to_partial_guild(&ctx.http).await?.name
+            };
+            sit_data.push(RankingData{name, sit_count, flip_count});
         }
 
         "Sit data in all servers"

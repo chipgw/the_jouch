@@ -6,6 +6,8 @@ use serenity::prelude::*;
 use serenity::utils::MessageBuilder;
 use chrono::prelude::*;
 use anyhow::anyhow;
+use tracing::{error, info, warn};
+
 use crate::config::Config;
 use crate::db::{Db, UserKey, UserData};
 use crate::CommandResult;
@@ -69,14 +71,14 @@ pub async fn check_nicks_loop(ctx: Context) {
             if let Some(db) = data.get::<Db>() {
                 db.get_guilds().await.unwrap_or_default()
             } else {
-                println!("error getting database");
+                error!("error getting database");
                 HashSet::new()
             }
         };
         for guild in &guilds {
-            println!("Updating nicknames in guild {}", guild);
+            info!("Updating nicknames in guild {}", guild);
             if let Err(e) = check_nicks_in_guild(&ctx, *guild).await {
-                println!("Got error {:?} when updating nicks for {}", e, guild);
+                warn!("Got error {:?} when updating nicks for {}", e, guild);
             }
 
             // wait between guild checks
@@ -95,7 +97,7 @@ async fn check_nicks_in_guild(ctx: &Context, guild: GuildId) -> CommandResult {
         let user = users.deserialize_current()?;
         if let Err(e) = check_nick_user(ctx, &user).await {
             // Don't pass the error up the chain, instead print and move on to the next user in the guild.
-            println!("Error updating nick for user {:?}, {:?}\ncontinuing...", user, e);
+            warn!("Error updating nick for user {:?}, {:?}\ncontinuing...", user, e);
         }
     }
     
@@ -144,7 +146,7 @@ pub async fn check_nick_user(ctx: &Context, user_data: &UserData) -> CommandResu
 
     if let Some(nick) = nick {
         user_data._id.guild.edit_member(&ctx.http, user_data._id.user, |e|{
-            println!("Updating nick for user {}", user_data._id.user);
+            info!("Updating nick for user {}", user_data._id.user);
             e.nickname(nick)
         }).await?;
     }

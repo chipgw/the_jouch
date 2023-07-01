@@ -31,6 +31,7 @@ use serenity::{async_trait, client::{Client, Context, EventHandler}, model::{
             },
         },
     }, builder::CreateApplicationCommands, prelude::GatewayIntents};
+use tracing::{error, info, debug, trace, warn};
 
 use commands::{autonick::*, birthday::*, clear::*, sit::*};
 
@@ -183,17 +184,17 @@ impl EventHandler for Handler {
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
         if let Interaction::ApplicationCommand(command) = interaction {
             if let Err(why) = Handler::handle_app_command(&ctx, command).await {
-                println!("Cannot respond to slash command: {}", why);
+                error!("Cannot respond to slash command: {}", why);
             }
         }
     }
 
     async fn ready(&self, ctx: Context, ready: Ready) {
-        println!("{} is connected!", ready.user.name);
+        info!("{} is connected!", ready.user.name);
 
         let commands = Command::set_global_application_commands(&ctx.http, Handler::create_commands).await;
 
-        println!("I now have the following slash commands: {:#?}", commands);
+        debug!("I now have the following slash commands: {:#?}", commands);
 
         let data = ctx.data.read().await;
         
@@ -202,7 +203,7 @@ impl EventHandler for Handler {
         } else {
             None
         };
-        println!("testing guild: {:?}", testing_guild);
+        trace!("testing guild: {:?}", testing_guild);
 
         if let Some(guild_id) = testing_guild {
             if let Some(guild) = ctx.cache.guild(guild_id) {
@@ -224,7 +225,7 @@ impl EventHandler for Handler {
                     });
                     commands
                 }).await;
-                println!("I also have testing guild ({:?}) specific slash commands: {:#?}", testing_guild, commands);
+                debug!("I also have testing guild ({:?}) specific slash commands: {:#?}", testing_guild, commands);
             }
         }
     }
@@ -239,7 +240,7 @@ impl EventHandler for Handler {
         // (mainy concerned about ourself, but any bot in theory could cause one so best to just ignore all)
         if !msg.author.bot {
             if let Err(err) = canned_responses::process(&ctx, &msg).await {
-                println!("Error processing canned responses: {:?}", err);
+                warn!("Error processing canned responses: {:?}", err);
             }
         }
     }
@@ -282,6 +283,8 @@ async fn serenity(
         .expect("Error creating client");
 
     let config = config::Config::load(&persist)?;
+
+    debug!("loaded congfig data: {:#?}", config);
 
     let shuttle_items = ShuttleItemsContainer {
         secret_store, assets_dir, persist

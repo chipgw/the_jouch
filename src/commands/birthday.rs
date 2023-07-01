@@ -9,6 +9,7 @@ use chrono::{Duration, prelude::*};
 use serde::{Serialize, Deserialize};
 use enum_utils::FromStr;
 use anyhow::anyhow;
+use tracing::{trace, error, info, warn};
 use crate::db::{Db, UserKey, UserData};
 use crate::CommandResult;
 
@@ -65,7 +66,7 @@ pub fn parse_date(date_str: &str) -> CommandResult<DateTime<FixedOffset>> {
             format_str.push_str(date_option);
             format_str.push_str(time_option);
 
-            print!("Trying format_str: \"{}\"", format_str);
+            trace!("Trying format_str: \"{}\"", format_str);
 
             // Trying with no time zone uses different parse function than trying with time zone
             let parsed_date = if time_option.is_empty() {
@@ -78,7 +79,7 @@ pub fn parse_date(date_str: &str) -> CommandResult<DateTime<FixedOffset>> {
 
             match parsed_date {
                 Ok(date) => return Ok(date),
-                Err(err) => println!(" failed with reason: {}", err),
+                Err(err) => trace!(" failed with reason: {}", err),
             }
         }
     }
@@ -225,7 +226,7 @@ pub async fn check_birthdays_loop(ctx: Context) {
             if let Some(db) = data.get::<Db>() {
                 db.get_guilds().await.unwrap_or_default()
             } else {
-                println!("error getting database");
+                error!("error getting database");
                 HashSet::new()
             }
         };
@@ -239,27 +240,27 @@ pub async fn check_birthdays_loop(ctx: Context) {
                                 (guild_data.birthday_announce_channel, guild_data.birthday_announce_when_none)
                             }).unwrap_or_default(),
                         Err(err) => {
-                            println!("error getting guild data for guild {}; {:?}", guild, err);
+                            error!("error getting guild data for guild {}; {:?}", guild, err);
                             (None, None)
                         }
                     }
                 } else {
-                    println!("error getting database");
+                    error!("error getting database");
                     (None, None)
                 }
             };
             
             if let Some(channel_id) = announce_channel {
-                println!("chacking birthdays in guild {}", guild);
+                info!("checking birthdays in guild {}", guild);
                 match todays_birthdays(&ctx, (*guild).into()).await {
                     Err(err) => {
-                        println!("got error {:?} when checking birthdays for {}", err, guild);
+                        error!("got error {:?} when checking birthdays for {}", err, guild);
                     },
                     Ok(msg) => {
                         if announce_when_none.unwrap_or_default() || !msg.contains("None") {
                             // Birthday announcement happens today
                             if let Err(err) = ChannelId(channel_id).say(&ctx.http, msg).await {
-                                println!("got error {:?} when sending birthday alert for {}", err, guild);
+                                warn!("got error {:?} when sending birthday alert for {}", err, guild);
                             }
                         }
                     },
