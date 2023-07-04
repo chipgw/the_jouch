@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use chrono::{DateTime, FixedOffset};
-use mongodb::bson::{Document, doc};
+use mongodb::bson::{Document, doc, to_bson};
 use mongodb::options::UpdateModifications;
 use mongodb::{Collection, Database, Cursor};
 use serenity::prelude::TypeMapKey;
@@ -103,9 +103,16 @@ impl Db {
         Ok(self.user_collection.find(&GuildKey{guild}, None).await?)
     }
 
+    // get all guilds with an entry in guild collection.
     pub async fn get_guilds(&self) -> anyhow::Result<HashSet<GuildId>> {
-        let v = self.guild_collection.distinct("guild_id", None, None).await?;
-        Ok(v.iter().map(|a|{(a.as_i64().unwrap() as u64).into()}).collect())
+        let v = self.guild_collection.distinct("_id", None, None).await?;
+        Ok(v.iter().map(|a|{a.as_str().unwrap().parse::<u64>().unwrap().into()}).collect())
+    }
+    // get all guilds with a user (specified or any) in user collection
+    pub async fn get_user_guilds(&self, user: Option<UserId>) -> anyhow::Result<HashSet<GuildId>> {
+        let filter = user.and_then(|u|{Some(doc!{"_id.user": to_bson(&u).ok()?})});
+        let v = self.user_collection.distinct("_id.guild", filter, None).await?;
+        Ok(v.iter().map(|a|{a.as_str().unwrap().parse::<u64>().unwrap().into()}).collect())
     }
 
     pub async fn foreach<T>(&self, guild: GuildId, mut task: T) -> anyhow::Result<()> 

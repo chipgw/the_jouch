@@ -224,6 +224,7 @@ pub async fn check_birthdays_loop(ctx: Context) {
         let guilds = {
             let data = ctx.data.read().await;
             if let Some(db) = data.get::<Db>() {
+                // If a guild has a channel set it will appear in the guilds collection, so no need to check user collection.
                 db.get_guilds().await.unwrap_or_default()
             } else {
                 error!("error getting database");

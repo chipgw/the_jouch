@@ -10,6 +10,7 @@ use serenity::model::prelude::*;
 use serenity::prelude::*;
 use serde::{Serialize, Deserialize};
 use serenity::utils::MessageBuilder;
+use tracing::debug;
 use crate::db::{Db, UserKey};
 use crate::{CommandResult, ShuttleItemsContainer};
 use super::autonick::check_nick_user_key;
@@ -169,7 +170,10 @@ async fn sit_check(ctx: &Context, user: &User, guild: Option<GuildId>, users: &V
             "Sit Data For Users"
         }
     } else {
-        let guilds = db.get_guilds().await?;
+        // get any guild that this user has data in.
+        let guilds = db.get_user_guilds(Some(user.id)).await?;
+
+        debug!("Checking user {} sit data in guilds: {:#?}", user.id, guilds);
 
         for guild in guilds {
             let user_key = UserKey { user: user.id, guild };
