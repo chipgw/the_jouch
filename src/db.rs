@@ -105,7 +105,7 @@ impl Db {
 
     // get all guilds with an entry in guild collection.
     pub async fn get_guilds(&self) -> anyhow::Result<HashSet<GuildId>> {
-        let v = self.guild_collection.distinct("_id", None, None).await?;
+        let v = self.guild_collection.distinct("_id.guild", None, None).await?;
         Ok(v.iter().map(|a|{a.as_str().unwrap().parse::<u64>().unwrap().into()}).collect())
     }
     // get all guilds with a user (specified or any) in user collection
