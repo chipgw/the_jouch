@@ -1,4 +1,4 @@
-use std::convert::TryFrom;
+use std::{convert::TryFrom, ops::ControlFlow};
 use serenity::{model::channel::{Message, ReactionType}, prelude::*};
 use serde::{Deserialize, Serialize};
 use anyhow::anyhow;
@@ -20,6 +20,8 @@ pub enum Trigger {
     EndsWith(String),
     // number represents minumum length the word should be
     RepeatedCharacter(char, usize),
+    // requires a chain of consecutive words to match each respective trigger
+    ConsecutiveWords(Vec<Trigger>),
 }
 
 impl From<&str> for Trigger {
@@ -28,14 +30,35 @@ impl From<&str> for Trigger {
     }
 }
 
-impl PartialEq<&str> for Trigger {
-    fn eq(&self, other: &&str) -> bool {
+impl Trigger {
+    fn process_word(&self, other: &str, acc: usize) -> (bool, usize) {
         match self {
-            Trigger::FullMatch(word) => word == other,
-            Trigger::StartsWith(pat) => other.starts_with(pat),
-            Trigger::EndsWith(pat) => other.ends_with(pat),
-            Trigger::RepeatedCharacter(a, min) => other.len() >= *min && other.chars().all(|ref b| a == b),
+            Trigger::FullMatch(word) => (word == other, 0),
+            Trigger::StartsWith(pat) => (other.starts_with(pat), 0),
+            Trigger::EndsWith(pat) => (other.ends_with(pat), 0),
+            Trigger::RepeatedCharacter(a, min) => (other.len() >= *min && other.chars().all(|ref b| a == b), 0),
+            Trigger::ConsecutiveWords(triggers) => {
+                // accumulator is ignored for this since nested Trigger::ConsecutiveWords are not allowed.
+                // TODO - block nested Trigger::ConsecutiveWords somehow.
+                if triggers[acc].process_word(other, 0).0 {
+                    (triggers.len() == acc + 1, acc + 1)
+                } else {
+                    (false, 0)
+                }
+            },
         }
+    }
+
+    fn process<'a>(&self, words: &Vec<&'a str>) -> bool {
+        words.iter().try_fold(0, |acc, other| { 
+            let (matched, acc) = self.process_word(other, acc);
+
+            if matched {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(acc)
+            }
+        }).is_break()
     }
 }
 
@@ -54,7 +77,7 @@ impl ResponseTable {
     pub fn process<'a>(&self, words: &Vec<&'a str>) -> Vec<Response> {
         let mut responses = Vec::new();
         for data in &self.map {
-            if data.triggers.iter().any(|a| words.into_iter().any(|b| { a == b })) {
+            if data.triggers.iter().any(|a| a.process(words)) {
                 responses.extend_from_slice(&data.responses);
             }
         }
@@ -84,7 +107,7 @@ pub async fn process(ctx: &Context, msg: &Message) -> CommandResult {
 
     let message_lower = msg.content.to_lowercase();
     let words = message_lower
-        .split(|c: char| { !c.is_alphabetic() })
+        .split(|c: char| { !c.is_alphanumeric() })
         .filter(|s| !s.is_empty())
         .collect();
 
