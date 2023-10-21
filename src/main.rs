@@ -4,7 +4,6 @@ mod db;
 mod config;
 
 use std::path::PathBuf;
-use std::iter::FromIterator;
 
 use anyhow::anyhow;
 use commands::db_migration::migrate;
@@ -15,7 +14,6 @@ use shuttle_persist::PersistInstance;
 use shuttle_runtime;
 use shuttle_serenity::ShuttleSerenity;
 use shuttle_secrets::SecretStore;
-use shuttle_static_folder;
 use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
 use serenity::{async_trait, client::{Client, Context, EventHandler}, model::{
         channel::Message, gateway::Ready, id::GuildId,
@@ -31,7 +29,7 @@ use serenity::{async_trait, client::{Client, Context, EventHandler}, model::{
             },
         },
     }, builder::CreateApplicationCommands, prelude::GatewayIntents};
-use tracing::{error, info, debug, trace, warn};
+use tracing::{error, info, trace, warn};
 
 use commands::{autonick::*, birthday::*, clear::*, sit::*};
 
@@ -194,7 +192,7 @@ impl EventHandler for Handler {
 
         let commands = Command::set_global_application_commands(&ctx.http, Handler::create_commands).await;
 
-        debug!("I now have the following slash commands: {:#?}", commands);
+        trace!("I now have the following slash commands: {:#?}", commands);
 
         let data = ctx.data.read().await;
         
@@ -225,7 +223,7 @@ impl EventHandler for Handler {
                     });
                     commands
                 }).await;
-                debug!("I also have testing guild ({:?}) specific slash commands: {:#?}", testing_guild, commands);
+                trace!("I also have testing guild ({:?}) specific slash commands: {:#?}", testing_guild, commands);
             }
         }
     }
@@ -265,7 +263,6 @@ impl TypeMapKey for ShuttleItemsContainer {
 #[shuttle_runtime::main]
 async fn serenity(
     #[shuttle_secrets::Secrets] secret_store: SecretStore,
-    #[shuttle_static_folder::StaticFolder(folder = "assets")] assets_dir: PathBuf,
     #[shuttle_shared_db::MongoDb] db: Database,
     #[shuttle_persist::Persist] persist: PersistInstance
 ) -> ShuttleSerenity {
@@ -284,10 +281,10 @@ async fn serenity(
 
     let config = config::Config::load(&persist)?;
 
-    debug!("loaded congfig data: {:#?}", config);
+    trace!("loaded config data: {:#?}", config);
 
     let shuttle_items = ShuttleItemsContainer {
-        secret_store, assets_dir, persist
+        secret_store, assets_dir: PathBuf::from("assets"), persist
     };
 
     {

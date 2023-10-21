@@ -19,12 +19,11 @@ webp = { version = "0.2", features = ["img"] }
 reqwest = "*"
 enum-utils = "0.1"
 rand="*"
-shuttle-runtime = "0.20"
-shuttle-serenity = "0.20"
-shuttle-secrets = "0.20"
-shuttle-static-folder = "0.20"
-shuttle-shared-db = { version = "0.20", features = ["mongodb"] }
-shuttle-persist = "0.20"
+shuttle-runtime = "0.29"
+shuttle-serenity = "0.29"
+shuttle-secrets = "0.29"
+shuttle-shared-db = { version = "0.29", features = ["mongodb"] }
+shuttle-persist = "0.29"
 mongodb = { version = "*" }
 anyhow = "*"
 tracing = "*"

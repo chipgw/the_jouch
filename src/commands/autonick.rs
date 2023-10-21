@@ -175,8 +175,12 @@ pub async fn autonick(ctx: &Context, command: &ApplicationCommandInteraction) ->
                 }
                 Err(anyhow!("No format string argument passed"))
             },
-            "clear" => {
-                set_nick(ctx, guild, command.user.id, None).await?;
+            "clear" => { 
+                let response = set_nick(ctx, guild, command.user.id, None).await?;
+
+                command.edit_original_interaction_response(&ctx.http, |r| {
+                    r.content(response)
+                }).await?;
 
                 Ok(())
             },
