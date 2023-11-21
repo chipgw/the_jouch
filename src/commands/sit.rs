@@ -5,7 +5,7 @@ use image::{GenericImage,GenericImageView,DynamicImage,ImageResult,error,imageop
 use mongodb::bson::{doc, to_bson};
 use rand::{distributions::Standard, prelude::Distribution, self, Rng};
 use serenity::builder::CreateEmbed;
-use serenity::model::application::interaction::application_command::{ApplicationCommandInteraction, CommandDataOptionValue};
+use serenity::model::application::interaction::application_command::{ApplicationCommandInteraction, CommandDataOptionValue, ResolvedTarget};
 use serenity::model::prelude::*;
 use serenity::prelude::*;
 use serde::{Serialize, Deserialize};
@@ -354,9 +354,18 @@ pub async fn flip(ctx: &Context, command: &ApplicationCommandInteraction) -> Com
 
     let emote = new_orientation.to_emotes().to_owned();
 
-    command.edit_original_interaction_response(&ctx.http, |r| {
-        r.content(emote + "︵╰(°□°╰)")
-    }).await?;
+    if let Some(ResolvedTarget::Message(ref msg)) = command.data.target() {
+        let mut builder = MessageBuilder::new();
+        builder.push(emote);
+        builder.push("︵╰(°□°╰) ← ");
+        builder.mention(&command.user);
+        msg.reply(ctx, builder.build()).await?;
+        command.delete_original_interaction_response(&ctx).await?;
+    } else {
+        command.edit_original_interaction_response(&ctx.http, |r| {
+            r.content(emote + "︵╰(°□°╰)")
+        }).await?;
+    }
 
     Ok(())
 }

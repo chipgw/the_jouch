@@ -76,6 +76,9 @@ impl Handler {
             command.name("flip").description("Flip The Jouch")
         })
         .create_application_command(|command| {
+            command.name("flip").kind(CommandType::Message)
+        })
+        .create_application_command(|command| {
             command.name("rectify").description("Put The Jouch back upright")
         })
         .create_application_command(|command| {
