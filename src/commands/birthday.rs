@@ -54,6 +54,10 @@ impl BirthdayPrivacy {
 pub fn get_bot_birthday() -> NaiveDate {
     NaiveDate::from_ymd_opt(2021, 7, 31).unwrap()
 }
+#[inline]
+pub fn get_jesus_birthday() -> NaiveDate {
+    NaiveDate::from_ymd_opt(0, 12, 25).unwrap()
+}
 
 pub fn parse_date(date_str: &str) -> CommandResult<DateTime<FixedOffset>> {
     // Default to CST
@@ -156,13 +160,27 @@ pub async fn todays_birthdays(ctx: &Context, guild: GuildId) -> CommandResult<St
     let now = Local::now();
     db.foreach(guild, |user_data|{
         if birthday_date_check(now, user_data) {
+            if birthday_count > 0 {
+                message.push(", ");
+            }
             message.mention(&user_data._id.user);
             birthday_count += 1;
         }
     }).await?;
     let bot_birthday = get_bot_birthday();
     if now.day() == bot_birthday.day() && now.month() == bot_birthday.month() {
+        if birthday_count > 0 {
+            message.push(", ");
+        }
         message.mention(&ctx.cache.current_user_id());
+        birthday_count += 1;
+    }
+    let jesus_birthday = get_jesus_birthday();
+    if now.day() == jesus_birthday.day() && now.month() == jesus_birthday.month() {
+        if birthday_count > 0 {
+            message.push(", ");
+        }
+        message.push("Jesus");
         birthday_count += 1;
     }
     if birthday_count == 0 {
