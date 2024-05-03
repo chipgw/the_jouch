@@ -1,7 +1,10 @@
-use std::{convert::TryFrom, ops::ControlFlow};
-use serenity::{model::channel::{Message, ReactionType}, prelude::*};
-use serde::{Deserialize, Serialize};
 use anyhow::anyhow;
+use serde::{Deserialize, Serialize};
+use serenity::{
+    model::channel::{Message, ReactionType},
+    prelude::*,
+};
+use std::{convert::TryFrom, ops::ControlFlow};
 use tracing::error;
 
 use crate::CommandResult;
@@ -36,7 +39,9 @@ impl Trigger {
             Trigger::FullMatch(word) => (word == other, 0),
             Trigger::StartsWith(pat) => (other.starts_with(pat), 0),
             Trigger::EndsWith(pat) => (other.ends_with(pat), 0),
-            Trigger::RepeatedCharacter(a, min) => (other.len() >= *min && other.chars().all(|ref b| a == b), 0),
+            Trigger::RepeatedCharacter(a, min) => {
+                (other.len() >= *min && other.chars().all(|ref b| a == b), 0)
+            }
             Trigger::ConsecutiveWords(triggers) => {
                 // accumulator is ignored for this since nested Trigger::ConsecutiveWords are not allowed.
                 // TODO - block nested Trigger::ConsecutiveWords somehow.
@@ -45,20 +50,23 @@ impl Trigger {
                 } else {
                     (false, 0)
                 }
-            },
+            }
         }
     }
 
     fn process<'a>(&self, words: &Vec<&'a str>) -> bool {
-        words.iter().try_fold(0, |acc, other| { 
-            let (matched, acc) = self.process_word(other, acc);
+        words
+            .iter()
+            .try_fold(0, |acc, other| {
+                let (matched, acc) = self.process_word(other, acc);
 
-            if matched {
-                ControlFlow::Break(())
-            } else {
-                ControlFlow::Continue(acc)
-            }
-        }).is_break()
+                if matched {
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(acc)
+                }
+            })
+            .is_break()
     }
 }
 
@@ -88,7 +96,10 @@ impl ResponseTable {
 async fn handle_responses(responses: Vec<Response>, ctx: &Context, msg: &Message) -> CommandResult {
     for response in responses {
         let result = match &response {
-            Response::Reaction(emote) => msg.react(ctx, ReactionType::try_from(emote.as_str())?).await.err(),
+            Response::Reaction(emote) => msg
+                .react(ctx, ReactionType::try_from(emote.as_str())?)
+                .await
+                .err(),
             Response::Reply(reply) => msg.reply(ctx, reply).await.err(),
         };
         // handle the error here so we can continue to go through any other responses
@@ -103,19 +114,22 @@ async fn handle_responses(responses: Vec<Response>, ctx: &Context, msg: &Message
 pub async fn process(ctx: &Context, msg: &Message) -> CommandResult {
     let data = ctx.data.read().await;
     let db = data.get::<Db>().ok_or(anyhow!("Unable to get database"))?;
-    let config = data.get::<Config>().ok_or(anyhow!("Unable to get config"))?;
+    let config = data
+        .get::<Config>()
+        .ok_or(anyhow!("Unable to get config"))?;
 
     let message_lower = msg.content.to_lowercase();
     let words = message_lower
-        .split(|c: char| { !c.is_alphanumeric() })
+        .split(|c: char| !c.is_alphanumeric())
         .filter(|s| !s.is_empty())
         .collect();
 
     if let Some(guild) = msg.guild_id {
         let result = db.read_guild(guild).await?.and_then(|guild| {
-            guild.canned_response_table.as_ref().map(|table|{
-                table.process(&words)
-            })
+            guild
+                .canned_response_table
+                .as_ref()
+                .map(|table| table.process(&words))
         });
 
         if let Some(responses) = result {
@@ -129,11 +143,18 @@ pub async fn process(ctx: &Context, msg: &Message) -> CommandResult {
 
 impl Default for ResponseTable {
     fn default() -> Self {
-        Self { map: vec![
-            ResponseData {
-                triggers: vec![Trigger::FullMatch("heresy".into()), Trigger::StartsWith("heretic".into()), Trigger::FullMatch("heresies".into())],
-                responses: vec![Response::Reply("Heresy has no place on The Jouch".into()), Response::Reaction("<:bythepope:881212318707482674>".into())],
-            },
-        ] }
+        Self {
+            map: vec![ResponseData {
+                triggers: vec![
+                    Trigger::FullMatch("heresy".into()),
+                    Trigger::StartsWith("heretic".into()),
+                    Trigger::FullMatch("heresies".into()),
+                ],
+                responses: vec![
+                    Response::Reply("Heresy has no place on The Jouch".into()),
+                    Response::Reaction("<:bythepope:881212318707482674>".into()),
+                ],
+            }],
+        }
     }
 }

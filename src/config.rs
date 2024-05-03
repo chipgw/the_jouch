@@ -1,5 +1,5 @@
 use anyhow::bail;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use serenity::prelude::TypeMapKey;
 use shuttle_persist::{PersistError, PersistInstance};
 
