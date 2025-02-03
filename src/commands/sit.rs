@@ -9,7 +9,7 @@ use image::{
     error, imageops::FilterType, DynamicImage, GenericImage, GenericImageView, ImageResult, Pixel,
 };
 use mongodb::bson::{doc, to_bson};
-use rand::{self, distributions::Standard, prelude::Distribution, Rng};
+use rand::{self, distr::StandardUniform, prelude::Distribution, Rng};
 use serde::{Deserialize, Serialize};
 use serenity::all::{
     CommandInteraction, Context, CreateAttachment, CreateEmbed, CreateInteractionResponseFollowup,
@@ -58,9 +58,9 @@ enum RankSortBy {
     Flips,
 }
 
-impl Distribution<JouchOrientation> for Standard {
+impl Distribution<JouchOrientation> for StandardUniform {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> JouchOrientation {
-        match rng.gen_range(0..=3) {
+        match rng.random_range(0..=3) {
             1 => JouchOrientation::UpsideDown,
             2 => JouchOrientation::RotatedLeft,
             3 => JouchOrientation::RotatedRight,
@@ -297,10 +297,10 @@ async fn sit_internal(
         assets_dir.join("jouch-0001.png")
     };
 
-    let mut base_image = image::io::Reader::open(base_image_path)?.decode()?;
+    let mut base_image = image::ImageReader::open(base_image_path)?.decode()?;
 
     let party_hat_image =
-        image::io::Reader::open(assets_dir.join("party-hat-0001.png"))?.decode()?;
+        image::ImageReader::open(assets_dir.join("party-hat-0001.png"))?.decode()?;
 
     let user_avatar = get_face(ctx, user, guild).await?;
 

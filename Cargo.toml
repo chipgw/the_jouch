@@ -23,6 +23,6 @@ shuttle-runtime = "0.44"
 shuttle-serenity = "0.44"
 shuttle-shared-db = { version = "0.44", features = ["mongodb"] }
 shuttle-persist = "0.44"
-mongodb = { version = "*" }
+mongodb = { version = "2.8.0" }
 anyhow = "*"
 tracing = "*"

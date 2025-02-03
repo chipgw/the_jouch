@@ -6,3 +6,4 @@ Secrets.dev.toml
 Secrets.toml
 shuttle_persist/
 *.patch
+.shuttle-storage
