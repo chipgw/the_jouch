@@ -1,27 +1,39 @@
-use anyhow::bail;
 use serde::{Deserialize, Serialize};
-use serenity::prelude::TypeMapKey;
-use shuttle_persist::{PersistError, PersistInstance};
+use serenity::{json::json, prelude::TypeMapKey};
+use sqlx::{prelude::FromRow, PgPool};
 
 use crate::canned_responses::ResponseTable;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, FromRow)]
 pub struct Config {
-    pub nick_interval: u64,
+    pub nick_interval: i64,
+    #[sqlx(json)]
     pub canned_response_table: ResponseTable,
 }
 
 impl Config {
-    pub(crate) fn load(persist: &PersistInstance) -> anyhow::Result<Self> {
-        Ok(match persist.load::<Self>("config") {
-            Ok(config) => config,
-            Err(PersistError::Open(_)) => Default::default(),
-            Err(_) => bail!("Unable to load config!"),
-        })
+    pub(crate) async fn load(db: &PgPool) -> anyhow::Result<Self> {
+        Ok(sqlx::query_as("SELECT * FROM config")
+            .fetch_optional(db)
+            .await?
+            .unwrap_or_default())
     }
 
-    pub(crate) fn save(&self, persist: &PersistInstance) -> anyhow::Result<()> {
-        Ok(persist.save("config", self)?)
+    pub(crate) async fn save(&self, db: &PgPool) -> anyhow::Result<()> {
+        sqlx::query(
+            "INSERT INTO config(nick_interval, canned_response_table)
+            VALUES ($1, $2)
+            ON CONFLICT (id)
+            DO UPDATE SET
+            nick_interval = $1,
+            canned_response_table = $2",
+        )
+        .bind(self.nick_interval)
+        .bind(json!(self.canned_response_table))
+        .execute(db)
+        .await?;
+
+        Ok(())
     }
 }
 impl Default for Config {

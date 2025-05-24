@@ -19,10 +19,9 @@ webp = { version = "0.3", features = ["img"] }
 reqwest = "*"
 enum-utils = "0.1"
 rand="*"
-shuttle-runtime = "0.44"
-shuttle-serenity = "0.44"
-shuttle-shared-db = { version = "0.44", features = ["mongodb"] }
-shuttle-persist = "0.44"
-mongodb = { version = "2.8.0" }
+shuttle-runtime = "0.55"
+shuttle-serenity = "0.55"
+shuttle-shared-db = { version = "0.55", features = ["postgres", "sqlx"] }
+sqlx = {version = "*", features = ["chrono"] }
 anyhow = "*"
 tracing = "*"

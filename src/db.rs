@@ -1,168 +1,150 @@
-use anyhow::anyhow;
+use crate::canned_responses::ResponseTable;
+use crate::commands::{birthday::BirthdayPrivacy, sit::JouchOrientation};
 use chrono::{DateTime, FixedOffset};
-use mongodb::bson::{doc, to_bson, Document};
-use mongodb::options::UpdateModifications;
-use mongodb::{Collection, Cursor, Database};
 use serde::{Deserialize, Serialize};
 use serenity::all::{GuildId, UserId};
 use serenity::prelude::TypeMapKey;
+use sqlx::{Encode, FromRow, PgPool, Postgres, QueryBuilder};
 use std::collections::HashSet;
-
-use crate::{
-    canned_responses::ResponseTable,
-    commands::{birthday::BirthdayPrivacy, sit::JouchOrientation},
-};
-
-#[derive(Eq, PartialEq, Debug, Serialize, Deserialize, Clone, Default)]
+use tracing::debug;
+#[derive(Eq, PartialEq, Debug, Serialize, Deserialize, Clone, Default, FromRow)]
 pub struct UserKey {
-    pub guild: GuildId,
-    pub user: UserId,
-}
-
-#[derive(Eq, PartialEq, Debug, Serialize, Deserialize, Clone, Default)]
-pub struct GuildKey {
-    pub guild: GuildId,
-}
-
-impl Into<Document> for &GuildKey {
-    fn into(self) -> Document {
-        doc! {"_id.guild": self.guild.get().to_string()}
-    }
-}
-
-impl Into<Option<Document>> for &GuildKey {
-    fn into(self) -> Option<Document> {
-        Some(self.into())
-    }
-}
-
-impl Into<Document> for &UserKey {
-    fn into(self) -> Document {
-        doc! {"_id": {"guild": self.guild.get().to_string(), "user": self.user.get().to_string()}}
-    }
-}
-impl Into<Option<Document>> for &UserKey {
-    fn into(self) -> Option<Document> {
-        Some(self.into())
-    }
+    #[sqlx(rename = "guild_id")]
+    pub guild: i64,
+    #[sqlx(rename = "user_id")]
+    pub user: i64,
 }
 
 pub struct Db {
-    _db: Database,
-    user_collection: Collection<UserData>,
-    guild_collection: Collection<GuildData>,
+    db: PgPool,
 }
 
 impl Db {
-    pub fn new(database: Database) -> Db {
-        Db {
-            user_collection: database.collection("users"),
-            guild_collection: database.collection("guilds"),
-            _db: database,
-        }
+    pub fn new(database: PgPool) -> Db {
+        Db { db: database }
     }
 
-    pub async fn update<T>(&mut self, user_key: &UserKey, task: T) -> anyhow::Result<UserData>
+    pub async fn update<'q, T>(
+        &self,
+        user_key: &UserKey,
+        field: &str,
+        value: T,
+    ) -> anyhow::Result<UserData>
     where
-        T: Into<UpdateModifications>,
+        T: 'q + Encode<'q, Postgres> + sqlx::Type<Postgres>,
     {
-        if self
-            .user_collection
-            .find_one(user_key, None)
-            .await?
-            .is_none()
-        {
-            let new_user_data = UserData::default_with_key(user_key);
+        let mut query = QueryBuilder::new(&format!(
+            "INSERT INTO users(guild_id, user_id, {field}) VALUES ("
+        ));
+        query
+            .separated(",")
+            .push_bind(user_key.guild)
+            .push_bind(user_key.user)
+            .push_bind(value);
+        query.push(&format!(") ON CONFLICT (guild_id, user_id) DO UPDATE SET {field} = EXCLUDED.{field} RETURNING *"));
 
-            self.user_collection.insert_one(new_user_data, None).await?;
-        };
+        debug!("query: {}", query.sql());
 
-        self.user_collection
-            .update_one(user_key.into(), task, None)
-            .await?;
-
-        self.user_collection
-            .find_one(user_key, None)
-            .await?
-            .ok_or(anyhow!("error getting user after update!"))
+        Ok(query.build_query_as().fetch_one(&self.db).await?)
     }
 
-    pub async fn update_guild<T>(&mut self, guild: GuildId, task: T) -> anyhow::Result<GuildData>
+    pub async fn increment(&self, user_key: &UserKey, field: &str) -> anyhow::Result<UserData> {
+        let mut query = QueryBuilder::new(&format!(
+            "INSERT INTO users(guild_id, user_id, {field}) VALUES ("
+        ));
+        query
+            .separated(",")
+            .push_bind(user_key.guild)
+            .push_bind(user_key.user)
+            .push(1);
+        query.push(&format!(") ON CONFLICT (guild_id, user_id) DO UPDATE SET {field} = users.{field} + 1 RETURNING *"));
+
+        debug!("query: {}", query.sql());
+
+        Ok(query.build_query_as().fetch_one(&self.db).await?)
+    }
+
+    pub async fn update_guild<'q, T>(
+        &self,
+        guild: GuildId,
+        field: &str,
+        value: T,
+    ) -> anyhow::Result<GuildData>
     where
-        T: Into<UpdateModifications>,
+        T: 'q + Encode<'q, Postgres> + sqlx::Type<Postgres>,
     {
-        let ref guild_key = GuildKey { guild };
+        let mut query = QueryBuilder::new(&format!("INSERT INTO guilds(id, {field}) VALUES ("));
+        query
+            .separated(",")
+            .push_bind(guild.get() as i64)
+            .push_bind(value);
+        query.push(&format!(
+            ") ON CONFLICT (id) DO UPDATE SET {field} = EXCLUDED.{field} RETURNING *"
+        ));
 
-        if self
-            .guild_collection
-            .find_one(guild_key, None)
-            .await?
-            .is_none()
-        {
-            let new_guild_data = GuildData::default_with_key(&guild_key);
+        let query_str = query.sql();
 
-            self.guild_collection
-                .insert_one(new_guild_data, None)
-                .await?;
-        };
+        debug!("query: {query_str}");
 
-        self.guild_collection
-            .update_one(guild_key.into(), task, None)
-            .await?;
-
-        self.guild_collection
-            .find_one(guild_key, None)
-            .await?
-            .ok_or(anyhow!("error getting guild after update!"))
+        Ok(query.build_query_as().fetch_one(&self.db).await?)
     }
 
     pub async fn read_guild(&self, guild: GuildId) -> anyhow::Result<Option<GuildData>> {
-        Ok(self
-            .guild_collection
-            .find_one(&GuildKey { guild }, None)
+        Ok(sqlx::query_as("SELECT * FROM guilds WHERE id = $1")
+            .bind(guild.get() as i64)
+            .fetch_optional(&self.db)
             .await?)
     }
 
     pub async fn read(&self, user_key: &UserKey) -> anyhow::Result<Option<UserData>> {
-        Ok(self.user_collection.find_one(user_key, None).await?)
+        Ok(
+            sqlx::query_as("SELECT * FROM users WHERE guild_id = $1 AND user_id = $2")
+                .bind(user_key.guild)
+                .bind(user_key.user)
+                .fetch_optional(&self.db)
+                .await?,
+        )
     }
 
-    pub async fn get_users(&self, guild: GuildId) -> anyhow::Result<Cursor<UserData>> {
-        Ok(self.user_collection.find(&GuildKey { guild }, None).await?)
+    pub async fn get_users(
+        &self,
+        guild: GuildId,
+        extra_query: &str,
+    ) -> anyhow::Result<Vec<UserData>> {
+        Ok(
+            sqlx::query_as(&("SELECT * FROM users WHERE guild_id = $1 ".to_owned() + extra_query))
+                .bind(guild.get() as i64)
+                .fetch_all(&self.db)
+                .await?,
+        )
     }
 
     // get all guilds with an entry in guild collection.
     pub async fn get_guilds(&self) -> anyhow::Result<HashSet<GuildId>> {
-        let v = self
-            .guild_collection
-            .distinct("_id.guild", None, None)
-            .await?;
-        Ok(v.iter()
-            .map(|a| a.as_str().unwrap().parse::<u64>().unwrap().into())
+        Ok(sqlx::query_scalar("SELECT id FROM guilds")
+            .fetch_all(&self.db)
+            .await?
+            .into_iter()
+            .map(|a: i64| (a as u64).into())
             .collect())
     }
     // get all guilds with a user (specified or any) in user collection
     pub async fn get_user_guilds(&self, user: Option<UserId>) -> anyhow::Result<HashSet<GuildId>> {
-        let filter = user.and_then(|u| Some(doc! {"_id.user": to_bson(&u).ok()?}));
-        let v = self
-            .user_collection
-            .distinct("_id.guild", filter, None)
-            .await?;
-        Ok(v.iter()
-            .map(|a| a.as_str().unwrap().parse::<u64>().unwrap().into())
-            .collect())
+        Ok(if let Some(user) = user {
+            sqlx::query_scalar("SELECT DISTINCT guild_id FROM users WHERE user_id = $1")
+                .bind(user.get() as i64)
+        } else {
+            sqlx::query_scalar("SELECT DISTINCT guild_id FROM users")
+        }
+        .fetch_all(&self.db)
+        .await?
+        .into_iter()
+        .map(|a: i64| (a as u64).into())
+        .collect())
     }
 
-    pub async fn foreach<T>(&self, guild: GuildId, mut task: T) -> anyhow::Result<()>
-    where
-        T: FnMut(&UserData),
-    {
-        let mut users = self.user_collection.find(&GuildKey { guild }, None).await?;
-        while users.advance().await? {
-            let user_data = users.deserialize_current()?;
-            task(&user_data);
-        }
-        Ok(())
+    pub fn pool(&self) -> &PgPool {
+        &self.db
     }
 }
 
@@ -170,40 +152,24 @@ impl TypeMapKey for Db {
     type Value = Db;
 }
 
-#[derive(Eq, PartialEq, Debug, Serialize, Deserialize, Clone, Default)]
+#[derive(Eq, PartialEq, Debug, Serialize, Deserialize, Clone, Default, FromRow)]
 pub struct UserData {
-    pub _id: UserKey,
+    #[sqlx(flatten)]
+    pub id: UserKey,
     pub birthday: Option<DateTime<FixedOffset>>,
     pub birthday_privacy: Option<BirthdayPrivacy>,
     pub auto_nick: Option<String>,
-    pub sit_count: Option<i64>,
-    pub flip_count: Option<i64>,
+    pub sit_count: i32,
+    pub flip_count: i32,
 }
 
-impl UserData {
-    pub fn default_with_key(user_key: &UserKey) -> Self {
-        Self {
-            _id: user_key.clone(),
-            ..Default::default()
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default, FromRow)]
 pub struct GuildData {
-    pub _id: GuildKey,
-    pub birthday_announce_channel: Option<u64>,
+    pub id: i64,
+    pub birthday_announce_channel: Option<i64>,
     pub birthday_announce_when_none: Option<bool>,
+    #[sqlx(json(nullable))]
     pub canned_response_table: Option<ResponseTable>,
     #[serde(default)]
     pub jouch_orientation: JouchOrientation,
-}
-
-impl GuildData {
-    pub fn default_with_key(guild_key: &GuildKey) -> Self {
-        Self {
-            _id: guild_key.clone(),
-            ..Default::default()
-        }
-    }
 }

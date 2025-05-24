@@ -1,6 +1,5 @@
 use anyhow::anyhow;
 use chrono::prelude::*;
-use mongodb::bson::doc;
 use serenity::all::{
     CommandDataOptionValue, CommandInteraction, Context, EditInteractionResponse, EditMember,
     GuildId, MessageBuilder, UserId,
@@ -13,8 +12,8 @@ use crate::db::{Db, UserData, UserKey};
 use crate::CommandResult;
 
 // how many seconds between nickname update checks?
-pub const DEFAULT_INTERVAL: u64 = 600;
-pub const fn default_interval() -> u64 {
+pub const DEFAULT_INTERVAL: i64 = 600;
+pub const fn default_interval() -> i64 {
     DEFAULT_INTERVAL
 }
 
@@ -33,11 +32,12 @@ async fn set_nick(
         .get_mut::<Db>()
         .ok_or(anyhow!("Unable to get database"))?;
 
-    let key = UserKey { user, guild };
+    let key = UserKey {
+        user: user.into(),
+        guild: guild.into(),
+    };
 
-    let user_data = db
-        .update(&key, doc! {"$set": {"auto_nick": nick.clone()}})
-        .await?;
+    let user_data = db.update(&key, "auto_nick", &nick).await?;
 
     // update immediately
     check_nick_user(ctx, &user_data).await?;
@@ -94,7 +94,7 @@ pub async fn check_nicks_loop(ctx: Context) {
             }
 
             // wait between guild checks
-            tokio::time::sleep(Duration::from_secs(interval)).await;
+            tokio::time::sleep(Duration::from_secs(interval as u64)).await;
         }
     }
 }
@@ -103,11 +103,10 @@ async fn check_nicks_in_guild(ctx: &Context, guild: GuildId) -> CommandResult {
     let data = ctx.data.read().await;
     let db = data.get::<Db>().ok_or(anyhow!("Unable to get database"))?;
 
-    let mut users = db.get_users(guild).await?;
+    let users = db.get_users(guild, "AND auto_nick IS NOT NULL").await?;
 
-    while users.advance().await? {
-        let user = users.deserialize_current()?;
-        if let Err(e) = check_nick_user(ctx, &user).await {
+    for user in &users {
+        if let Err(e) = check_nick_user(ctx, user).await {
             // Don't pass the error up the chain, instead print and move on to the next user in the guild.
             warn!(
                 "Error updating nick for user {:?}, {:?}\ncontinuing...",
@@ -129,10 +128,7 @@ pub async fn check_nick_user_key(ctx: &Context, user_key: &UserKey, db: &Db) -> 
 pub async fn check_nick_user(ctx: &Context, user_data: &UserData) -> CommandResult {
     let nick = if let Some(mut nick) = user_data.auto_nick.clone() {
         if nick.contains(JOUCH_PAT) {
-            nick = nick.replace(
-                JOUCH_PAT,
-                &user_data.sit_count.unwrap_or_default().to_string(),
-            );
+            nick = nick.replace(JOUCH_PAT, &user_data.sit_count.to_string());
         }
         if nick.contains(AGE_PAT) || nick.contains(AGE_PAT2) {
             if let Some(birthday) = user_data.birthday {
@@ -176,13 +172,11 @@ pub async fn check_nick_user(ctx: &Context, user_data: &UserData) -> CommandResu
     };
 
     if let Some(nick) = nick {
-        info!("Updating nick for user {}", user_data._id.user);
-        user_data
-            ._id
-            .guild
+        info!("Updating nick for user {}", user_data.id.user);
+        GuildId::new(user_data.id.guild as u64)
             .edit_member(
                 &ctx.http,
-                user_data._id.user,
+                UserId::new(user_data.id.user as u64),
                 EditMember::new().nickname(nick),
             )
             .await?;

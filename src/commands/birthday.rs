@@ -3,7 +3,6 @@ use crate::CommandResult;
 use anyhow::anyhow;
 use chrono::{prelude::*, Duration};
 use enum_utils::FromStr;
-use mongodb::bson::{doc, to_bson, Bson};
 use serde::{Deserialize, Serialize};
 use serenity::all::{
     ChannelId, CommandDataOptionValue, CommandInteraction, Context, EditInteractionResponse,
@@ -25,7 +24,8 @@ const TIME_OPTIONS: &[&str] = &[
     "",          // no time provided
 ];
 
-#[derive(Eq, PartialEq, Debug, Serialize, Deserialize, Clone, Copy, FromStr)]
+#[derive(Eq, PartialEq, Debug, Serialize, Deserialize, Clone, Copy, FromStr, sqlx::Type)]
+#[sqlx(type_name = "birthday_privacy")]
 #[enumeration(case_insensitive)]
 pub enum BirthdayPrivacy {
     // Public YMD
@@ -104,10 +104,13 @@ pub async fn clear_birthday(ctx: &Context, guild: GuildId, user: UserId) -> Comm
         .get_mut::<Db>()
         .ok_or(anyhow!("Unable to get database"))?;
 
-    let key = UserKey { user, guild };
+    let key = UserKey {
+        user: user.into(),
+        guild: guild.into(),
+    };
 
     let user_data = db
-        .update(&key, doc! {"$set": {"birthday": Bson::Null}})
+        .update(&key, "birthday", Option::<DateTime<FixedOffset>>::None)
         .await?;
 
     // try updating the user nickname but ignore if it fails.
@@ -130,14 +133,14 @@ pub async fn set_birthday(
         .get_mut::<Db>()
         .ok_or(anyhow!("Unable to get database"))?;
 
-    let key = UserKey { user, guild };
+    let key = UserKey {
+        user: user.into(),
+        guild: guild.into(),
+    };
 
-    let user_data = db
-        .update(
-            &key,
-            doc! { "$set": {"birthday": to_bson(&date)?, "birthday_privacy": to_bson(&privacy)?}},
-        )
-        .await?;
+    // TODO - make it so these can be done in one query
+    db.update(&key, "birthday", date).await?;
+    let user_data = db.update(&key, "birthday_privacy", privacy).await?;
 
     // try updating the user nickname but ignore if it fails.
     let _ = check_nick_user(ctx, &user_data).await;
@@ -163,7 +166,7 @@ fn birthday_date_check(day: DateTime<Local>, user_data: &UserData) -> bool {
 
 pub async fn is_birthday_today(ctx: &Context, user_key: UserKey) -> CommandResult<bool> {
     let now = Local::now();
-    if user_key.user == ctx.cache.current_user().id {
+    if user_key.user == ctx.cache.current_user().id.get() as i64 {
         let bot_birthday = get_bot_birthday();
         return Ok(now.day() == bot_birthday.day() && now.month() == bot_birthday.month());
     }
@@ -184,17 +187,23 @@ pub async fn todays_birthdays(ctx: &Context, guild: GuildId) -> CommandResult<St
 
     let data = ctx.data.read().await;
     let db = data.get::<Db>().ok_or(anyhow!("Unable to get database"))?;
-    let now = Local::now();
-    db.foreach(guild, |user_data| {
-        if birthday_date_check(now, user_data) {
+
+    let users = db
+        .get_users(
+            guild,
+            "AND DATE_PART('doy', birthday) = DATE_PART('doy', CURRENT_DATE)",
+        )
+        .await?;
+    for user_data in &users {
+        if user_data.birthday_privacy != Some(BirthdayPrivacy::Private) {
             if birthday_count > 0 {
                 message.push(", ");
             }
-            message.mention(&user_data._id.user);
+            message.mention(&UserId::new(user_data.id.user as u64));
             birthday_count += 1;
         }
-    })
-    .await?;
+    }
+    let now = Local::now();
     let bot_birthday = get_bot_birthday();
     if now.day() == bot_birthday.day() && now.month() == bot_birthday.month() {
         if birthday_count > 0 {
@@ -239,7 +248,10 @@ pub async fn user_birthdays(
             continue;
         }
 
-        let key = UserKey { user, guild };
+        let key = UserKey {
+            user: user.into(),
+            guild: guild.into(),
+        };
 
         let data = ctx.data.read().await;
         let db = data.get::<Db>().ok_or(anyhow!("Unable to get database"))?;
@@ -314,7 +326,9 @@ pub async fn check_birthdays_loop(ctx: Context) {
                     Ok(msg) => {
                         if announce_when_none.unwrap_or_default() || !msg.contains("None") {
                             // Birthday announcement happens today
-                            if let Err(err) = ChannelId::new(channel_id).say(&ctx.http, msg).await {
+                            if let Err(err) =
+                                ChannelId::new(channel_id as u64).say(&ctx.http, msg).await
+                            {
                                 warn!(
                                     "got error {:?} when sending birthday alert for {}",
                                     err, guild

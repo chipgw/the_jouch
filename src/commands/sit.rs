@@ -8,12 +8,11 @@ use image::ImageFormat;
 use image::{
     error, imageops::FilterType, DynamicImage, GenericImage, GenericImageView, ImageResult, Pixel,
 };
-use mongodb::bson::{doc, to_bson};
 use rand::{self, distr::StandardUniform, prelude::Distribution, Rng};
 use serde::{Deserialize, Serialize};
 use serenity::all::{
     CommandInteraction, Context, CreateAttachment, CreateEmbed, CreateInteractionResponseFollowup,
-    EditInteractionResponse, GuildId, MessageBuilder, ResolvedTarget, ResolvedValue, User,
+    EditInteractionResponse, GuildId, MessageBuilder, ResolvedTarget, ResolvedValue, User, UserId,
 };
 use std::convert::TryInto;
 use std::io::Cursor;
@@ -23,7 +22,8 @@ const SIT_ONE: (u32, u32) = (385, 64);
 const SIT_WITH: (u32, u32, u32, u32) = (240, 64, 580, 64);
 const HAT_OFFSET: (u32, u32) = (48, 64);
 
-#[derive(Default, Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Default, Clone, Copy, Debug, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "jouch_orientation")]
 pub enum JouchOrientation {
     #[default]
     Normal,
@@ -127,39 +127,28 @@ fn blend(
 
 pub async fn increment_sit_counter(db: &mut Db, user: &User, guild: GuildId) -> CommandResult {
     let key = UserKey {
-        user: user.id,
-        guild,
+        user: user.id.into(),
+        guild: guild.into(),
     };
-    let sit_count = db.read(&key).await?.and_then(|data| data.sit_count);
-    db.update(
-        &key,
-        doc! {"$set": {"sit_count": sit_count.unwrap_or_default() + 1}},
-    )
-    .await?;
+    db.increment(&key, "sit_count").await?;
 
     Ok(())
 }
 
 pub async fn increment_flip_counter(db: &mut Db, user: &User, guild: GuildId) -> CommandResult {
     let key = UserKey {
-        user: user.id,
-        guild,
+        user: user.id.into(),
+        guild: guild.into(),
     };
-
-    let flip_count = db.read(&key).await?.and_then(|data| data.flip_count);
-    db.update(
-        &key,
-        doc! {"$set": {"flip_count": flip_count.unwrap_or_default() + 1}},
-    )
-    .await?;
+    db.increment(&key, "flip_count").await?;
 
     Ok(())
 }
 
 struct RankingData {
     name: String,
-    sit_count: Option<i64>,
-    flip_count: Option<i64>,
+    sit_count: i32,
+    flip_count: i32,
 }
 
 async fn sit_check(
@@ -177,11 +166,20 @@ async fn sit_check(
 
     let title = if let Some(guild) = guild {
         if users.is_empty() {
-            let mut users = db.get_users(guild).await?;
+            let users = db
+                .get_users(
+                    guild,
+                    match sort_by {
+                        RankSortBy::Sits => "ORDER BY sit_count DESC, flip_count DESC LIMIT 10",
+                        RankSortBy::Flips => "ORDER BY flip_count DESC, sit_count DESC LIMIT 10",
+                    },
+                )
+                .await?;
 
-            while users.advance().await? {
-                let user_data = users.deserialize_current()?;
-                let user = user_data._id.user.to_user(ctx).await?;
+            for user_data in users {
+                let user = Into::<UserId>::into(user_data.id.user as u64)
+                    .to_user(ctx)
+                    .await?;
                 let name = user.nick_in(ctx, guild).await.unwrap_or(user.name);
                 sit_data.push(RankingData {
                     name,
@@ -190,19 +188,13 @@ async fn sit_check(
                 });
             }
 
-            let sort_func: fn(&RankingData, &RankingData) -> std::cmp::Ordering = match sort_by {
-                RankSortBy::Sits => |a, b| b.sit_count.cmp(&a.sit_count),
-                RankSortBy::Flips => |a, b| b.flip_count.cmp(&a.flip_count),
-            };
-            sit_data.sort_unstable_by(sort_func);
-            sit_data.truncate(10);
-
             "Sit Leaderboard"
         } else {
+            // TODO - there should be a more efficient way to do this, i.e. with a single query
             for user in users {
                 let key = UserKey {
-                    user: user.id,
-                    guild,
+                    user: user.id.into(),
+                    guild: guild.into(),
                 };
                 let name = user.nick_in(ctx, guild).await.unwrap_or(user.name.clone());
                 let (sit_count, flip_count) = db
@@ -219,6 +211,7 @@ async fn sit_check(
             "Sit Data For Users"
         }
     } else {
+        // TODO - there should be a more efficient way to do this, i.e. with a single query
         // get any guild that this user has data in.
         let guilds = db.get_user_guilds(Some(user.id)).await?;
 
@@ -229,8 +222,8 @@ async fn sit_check(
 
         for guild in guilds {
             let user_key = UserKey {
-                user: user.id,
-                guild,
+                user: user.id.into(),
+                guild: guild.into(),
             };
             let (sit_count, flip_count) = db
                 .read(&user_key)
@@ -255,18 +248,18 @@ async fn sit_check(
     let mut embed = CreateEmbed::default();
 
     for data in sit_data {
-        if data.sit_count.is_none() && data.flip_count.is_none() {
+        if data.sit_count <= 0 && data.flip_count <= 0 {
             // We have neither sit nore flip data, so don't display at all.
             continue;
         }
         let mut msg = MessageBuilder::new();
-        if let Some(sit_count) = data.sit_count {
+        if data.sit_count > 0 {
             msg.push("Times on The Jouch: ")
-                .push_line(sit_count.to_string());
+                .push_line(data.sit_count.to_string());
         }
-        if let Some(flip_count) = data.flip_count {
+        if data.flip_count > 0 {
             msg.push("Flips of The Jouch: ")
-                .push_line(flip_count.to_string());
+                .push_line(data.flip_count.to_string());
         }
         embed = embed.field(data.name, msg.build(), false);
     }
@@ -314,8 +307,8 @@ async fn sit_internal(
             if is_birthday_today(
                 ctx,
                 UserKey {
-                    user: user.id,
-                    guild,
+                    user: user.id.into(),
+                    guild: guild.into(),
                 },
             )
             .await?
@@ -331,8 +324,8 @@ async fn sit_internal(
             if is_birthday_today(
                 ctx,
                 UserKey {
-                    user: other.id,
-                    guild,
+                    user: user.id.into(),
+                    guild: guild.into(),
                 },
             )
             .await?
@@ -353,8 +346,8 @@ async fn sit_internal(
             if is_birthday_today(
                 ctx,
                 UserKey {
-                    user: user.id,
-                    guild,
+                    user: user.id.into(),
+                    guild: guild.into(),
                 },
             )
             .await?
@@ -402,8 +395,8 @@ async fn sit_internal(
         let _ = check_nick_user_key(
             ctx,
             &UserKey {
-                user: user.id,
-                guild,
+                user: user.id.into(),
+                guild: guild.into(),
             },
             db,
         )
@@ -413,8 +406,8 @@ async fn sit_internal(
             let _ = check_nick_user_key(
                 ctx,
                 &UserKey {
-                    user: user.id,
-                    guild,
+                    user: user.id.into(),
+                    guild: guild.into(),
                 },
                 db,
             )
@@ -499,13 +492,8 @@ pub async fn flip(ctx: &Context, command: &CommandInteraction) -> CommandResult 
             .get_mut::<Db>()
             .ok_or(anyhow!("Unable to get database"))?;
         increment_flip_counter(db, &command.user, guild).await?;
-        db.update_guild(
-            guild,
-            doc! {
-                "$set": {"jouch_orientation": to_bson(&new_orientation)?}
-            },
-        )
-        .await?;
+        db.update_guild(guild, "jouch_orientation", new_orientation)
+            .await?;
     }
 
     let emote = new_orientation.to_emotes().to_owned();
@@ -537,13 +525,8 @@ pub async fn rectify(ctx: &Context, command: &CommandInteraction) -> CommandResu
         let db = data
             .get_mut::<Db>()
             .ok_or(anyhow!("Unable to get database"))?;
-        db.update_guild(
-            guild,
-            doc! {
-                "$set": {"jouch_orientation": to_bson(&new_orientation)?}
-            },
-        )
-        .await?;
+        db.update_guild(guild, "jouch_orientation", new_orientation)
+            .await?;
     }
 
     let emote = new_orientation.to_emotes().to_owned();

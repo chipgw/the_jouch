@@ -7,7 +7,6 @@ use std::path::PathBuf;
 
 use anyhow::anyhow;
 use commands::db_migration::migrate;
-use mongodb::Database;
 use serenity::all::{
     Command, CommandInteraction, CommandOptionType, CommandType, Context, CreateCommand,
     CreateCommandOption, CreateInteractionResponse, CreateInteractionResponseMessage,
@@ -16,7 +15,6 @@ use serenity::all::{
 use serenity::model::Permissions;
 use serenity::prelude::TypeMapKey;
 use serenity::{async_trait, Client};
-use shuttle_persist::PersistInstance;
 use shuttle_runtime;
 use shuttle_runtime::SecretStore;
 use shuttle_serenity::ShuttleSerenity;
@@ -201,7 +199,6 @@ macro_rules! outer {
 struct ShuttleItemsContainer {
     secret_store: SecretStore,
     assets_dir: PathBuf,
-    persist: PersistInstance,
 }
 
 impl TypeMapKey for ShuttleItemsContainer {
@@ -211,9 +208,14 @@ impl TypeMapKey for ShuttleItemsContainer {
 #[shuttle_runtime::main]
 async fn serenity(
     #[shuttle_runtime::Secrets] secret_store: SecretStore,
-    #[shuttle_shared_db::MongoDb] db: Database,
-    #[shuttle_persist::Persist] persist: PersistInstance,
+    #[shuttle_shared_db::Postgres] db: sqlx::PgPool,
 ) -> ShuttleSerenity {
+    // Run SQL migrations; TODO
+    sqlx::migrate!()
+        .run(&db)
+        .await
+        .expect("Failed to run migrations");
+
     let token = secret_store
         .get("discord_token")
         .ok_or(outer!("Unable to load token from secret store!"))?;
@@ -234,14 +236,13 @@ async fn serenity(
         .await
         .expect("Error creating client");
 
-    let config = config::Config::load(&persist)?;
+    let config = config::Config::load(&db).await?;
 
     trace!("loaded config data: {:#?}", config);
 
     let shuttle_items = ShuttleItemsContainer {
         secret_store,
         assets_dir: PathBuf::from("assets"),
-        persist,
     };
 
     {

@@ -2,23 +2,28 @@ use crate::{
     canned_responses::ResponseTable,
     commands::{birthday::BirthdayPrivacy, sit::JouchOrientation},
     db::{Db, UserKey},
-    ShuttleItemsContainer,
 };
 use anyhow::anyhow;
 use anyhow::bail;
 use chrono::{DateTime, FixedOffset};
-use mongodb::bson::{doc, to_bson};
-use ron::{de::from_bytes,ser::{to_string_pretty, PrettyConfig}};
+use ron::{
+    de::from_bytes,
+    ser::{to_string_pretty, PrettyConfig},
+};
 use serde::{Deserialize, Serialize};
-use serenity::{all::{
-    ButtonStyle, CommandInteraction, Context, CreateActionRow, CreateButton,
-    CreateInteractionResponse, CreateInteractionResponseFollowup, CreateInteractionResponseMessage,
-    EditMessage, GuildId, ResolvedValue, UserId,
-}, builder::CreateAttachment};
+use serenity::{
+    all::{
+        ButtonStyle, CommandInteraction, Context, CreateActionRow, CreateButton,
+        CreateInteractionResponse, CreateInteractionResponseFollowup,
+        CreateInteractionResponseMessage, EditMessage, GuildId, ResolvedValue,
+    },
+    builder::CreateAttachment,
+    json::json,
+};
 use std::collections::HashMap;
 use tracing::debug;
 
-// only the canned_response_table & nick_interval are actually imported, 
+// only the canned_response_table & nick_interval are actually imported,
 // but the other members exist for legacy reasons; they are handled with shuttle secrets.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
@@ -27,7 +32,7 @@ pub struct Config {
     #[serde(default)]
     pub app_id: u64,
     #[serde(default = "crate::commands::autonick::default_interval")]
-    pub nick_interval: u64,
+    pub nick_interval: i64,
     #[serde(default)]
     pub canned_response_table: ResponseTable,
     #[serde(default)]
@@ -52,42 +57,48 @@ pub async fn migrate(ctx: &Context, command: &CommandInteraction) -> anyhow::Res
     if command.data.options.len() == 0 {
         // If no arguments are supplied, we generate files that can be uploaded later
         let data = ctx.data.read().await;
-        let db = data
-            .get::<Db>()
-            .ok_or(anyhow!("Unable to get database"))?;
-        
+        let db = data.get::<Db>().ok_or(anyhow!("Unable to get database"))?;
+
         let guilds = db.get_guilds().await?;
-        
+
         let mut db_data: DbData = DbData::new();
-        
+
         for guild in guilds {
             let guild_data_db = db.read_guild(guild).await?.unwrap();
-            let mut guild_data = GuildData {
-                users: HashMap::new(),
-                birthday_announce_channel: guild_data_db.birthday_announce_channel,
+            let users = db.get_users(guild, "").await?;
+            let guild_data = GuildData {
+                users: users
+                    .iter()
+                    .map(|user_data| {
+                        (
+                            user_data.id.user as u64,
+                            UserData {
+                                birthday: user_data.birthday,
+                                birthday_privacy: user_data.birthday_privacy,
+                                auto_nick: user_data.auto_nick.clone(),
+                                sit_count: Some(user_data.sit_count as u64),
+                                flip_count: Some(user_data.flip_count as u64),
+                            },
+                        )
+                    })
+                    .collect(),
+                birthday_announce_channel: guild_data_db
+                    .birthday_announce_channel
+                    .map(|x| x as u64),
                 birthday_announce_when_none: guild_data_db.birthday_announce_when_none,
                 canned_response_table: guild_data_db.canned_response_table,
                 jouch_orientation: guild_data_db.jouch_orientation,
             };
-            db.foreach(guild, |user_data| {
-                guild_data.users.insert(user_data._id.user.into(), UserData {
-                    birthday: user_data.birthday,
-                    birthday_privacy: user_data.birthday_privacy,
-                    auto_nick: user_data.auto_nick.clone(),
-                    sit_count: user_data.sit_count.map(|u| u as u64),
-                    flip_count: user_data.flip_count.map(|u| u as u64),
-                });
-            }).await?;
-            
+
             db_data.insert(guild.into(), guild_data);
-        };
-        
+        }
+
         let out_db = to_string_pretty(&db_data, PrettyConfig::default())?;
-        
+
         let config = data
             .get::<crate::config::Config>()
             .ok_or(anyhow!("Unable to get config"))?;
-        
+
         let out_cfg = to_string_pretty(config, PrettyConfig::default())?;
 
         command
@@ -98,7 +109,7 @@ pub async fn migrate(ctx: &Context, command: &CommandInteraction) -> anyhow::Res
                     .add_file(CreateAttachment::bytes(out_cfg, "config.ron")),
             )
             .await?;
-        
+
         Ok(())
     } else {
         let mut msg = command
@@ -134,46 +145,73 @@ pub async fn migrate(ctx: &Context, command: &CommandInteraction) -> anyhow::Res
                     ),
                 )
                 .await?;
-    
+
             if !confirmed {
                 return Ok(());
             }
         }
-    
+
         for arg in &command.data.options() {
             if let ResolvedValue::Attachment(attachment) = arg.value {
                 let data = attachment.download().await?;
                 match arg.name {
                     "jouch_db" => {
                         let db_data: DbData = from_bytes(&data)?;
-    
-                        let mut data = ctx.data.write().await;
-                        let db = data
-                            .get_mut::<Db>()
-                            .ok_or(anyhow!("Unable to get database"))?;
-    
+
+                        let data = ctx.data.read().await;
+                        let db = data.get::<Db>().ok_or(anyhow!("Unable to get database"))?;
+
                         for (guild_id, guild_data) in &db_data {
                             let guild_id = GuildId::from(*guild_id);
-                            db.update_guild(guild_id, doc!{"$set": {
-                                "birthday_announce_channel": to_bson(&guild_data.birthday_announce_channel)?,
-                                "birthday_announce_when_none": to_bson(&guild_data.birthday_announce_when_none)?,
-                                "canned_response_table": to_bson(&guild_data.canned_response_table)?,
-                                "jouch_orientation": to_bson(&guild_data.jouch_orientation)?,
-                            }}).await?;
-    
+                            db.update_guild(
+                                guild_id,
+                                "birthday_announce_channel",
+                                guild_data.birthday_announce_channel.map(|x| x as i64),
+                            )
+                            .await?;
+                            db.update_guild(
+                                guild_id,
+                                "birthday_announce_when_none",
+                                guild_data.birthday_announce_when_none,
+                            )
+                            .await?;
+                            db.update_guild(
+                                guild_id,
+                                "canned_response_table",
+                                json!(guild_data.canned_response_table),
+                            )
+                            .await?;
+                            db.update_guild(
+                                guild_id,
+                                "jouch_orientation",
+                                guild_data.jouch_orientation,
+                            )
+                            .await?;
+
                             for (user_id, user_data) in &guild_data.users {
+                                let user_key = UserKey {
+                                    user: *user_id as i64,
+                                    guild: guild_id.into(),
+                                };
+                                db.update(&user_key, "birthday", user_data.birthday).await?;
                                 db.update(
-                                    &UserKey {
-                                        user: UserId::from(*user_id),
-                                        guild: guild_id,
-                                    },
-                                    doc! {"$set": {
-                                        "birthday": to_bson(&user_data.birthday)?,
-                                        "birthday_privacy": to_bson(&user_data.birthday_privacy)?,
-                                        "auto_nick": to_bson(&user_data.auto_nick)?,
-                                        "sit_count": to_bson(&user_data.sit_count)?,
-                                        "flip_count": to_bson(&user_data.flip_count)?,
-                                    }},
+                                    &user_key,
+                                    "birthday_privacy",
+                                    user_data.birthday_privacy,
+                                )
+                                .await?;
+                                db.update(&user_key, "auto_nick", user_data.auto_nick.clone())
+                                    .await?;
+                                db.update(
+                                    &user_key,
+                                    "sit_count",
+                                    user_data.sit_count.unwrap_or_default() as i64,
+                                )
+                                .await?;
+                                db.update(
+                                    &user_key,
+                                    "flip_count",
+                                    user_data.flip_count.unwrap_or_default() as i64,
                                 )
                                 .await?;
                             }
@@ -181,32 +219,30 @@ pub async fn migrate(ctx: &Context, command: &CommandInteraction) -> anyhow::Res
                     }
                     "config" => {
                         let old_config: Config = from_bytes(&data)?;
-    
+
                         let mut data = ctx.data.write().await;
-    
+
                         {
                             let config = data
                                 .get_mut::<crate::config::Config>()
                                 .ok_or(anyhow!("Unable to get config"))?;
-    
+
                             config.canned_response_table = old_config.canned_response_table;
                             config.nick_interval = old_config.nick_interval;
                         }
-    
+
                         let config = data
                             .get::<crate::config::Config>()
                             .ok_or(anyhow!("Unable to get config"))?;
-                        let shuttle_items = data
-                            .get::<ShuttleItemsContainer>()
-                            .ok_or(anyhow!("Unable to get ShuttleItemsContainer!"))?;
-    
+                        let db = data.get::<Db>().ok_or(anyhow!("Unable to get database"))?;
+
                         debug!("Updated Config to: {:#?}", config);
-    
-                        config.save(&shuttle_items.persist)?;
-    
+
+                        config.save(db.pool()).await?;
+
                         debug!(
                             "Config as saved in shuttle persisted storage: {:#?}",
-                            crate::config::Config::load(&shuttle_items.persist)
+                            crate::config::Config::load(db.pool()).await
                         );
                     }
                     _ => bail!("option {} not recognized!", arg.name),
