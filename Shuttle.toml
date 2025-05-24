@@ -1,1 +1,6 @@
 name = "the-jouch"
+
+build.assets = [
+  "assets/jouch-*", # the jouch base images
+  "assets/party-hat-0001.png*",
+]
