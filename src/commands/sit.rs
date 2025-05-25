@@ -493,7 +493,17 @@ pub async fn flip(ctx: &Context, command: &CommandInteraction) -> CommandResult 
             .ok_or(anyhow!("Unable to get database"))?;
         increment_flip_counter(db, &command.user, guild).await?;
         db.update_guild(guild, "jouch_orientation", new_orientation)
-            .await?;
+            .await?; 
+        
+        let _ = check_nick_user_key(
+            ctx,
+            &UserKey {
+                user: command.user.id.into(),
+                guild: guild.into(),
+            },
+            db,
+        )
+        .await;
     }
 
     let emote = new_orientation.to_emotes().to_owned();

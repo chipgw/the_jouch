@@ -66,7 +66,7 @@ impl Handler {
             .add_option(CreateCommandOption::new(CommandOptionType::SubCommand,"set","set your nickname format string")
                 .add_sub_option(
                     CreateCommandOption::new(CommandOptionType::String, "nickname", 
-                        "format string; %a will be replaced with age and %j with times sat on The Jouch")
+                        "format string; %a will be replaced with age, %j with times sat on The Jouch, and %f with times flipping The Jouch")
                         .required(true)
                 )
             )

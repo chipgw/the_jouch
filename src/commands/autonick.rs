@@ -18,6 +18,7 @@ pub const fn default_interval() -> i64 {
 }
 
 const JOUCH_PAT: &str = "%j";
+const FLIP_PAT: &str = "%f";
 const AGE_PAT: &str = "%a";
 const AGE_PAT2: &str = "%A";
 
@@ -129,6 +130,9 @@ pub async fn check_nick_user(ctx: &Context, user_data: &UserData) -> CommandResu
     let nick = if let Some(mut nick) = user_data.auto_nick.clone() {
         if nick.contains(JOUCH_PAT) {
             nick = nick.replace(JOUCH_PAT, &user_data.sit_count.to_string());
+        }
+        if nick.contains(FLIP_PAT) {
+            nick = nick.replace(FLIP_PAT, &user_data.flip_count.to_string());
         }
         if nick.contains(AGE_PAT) || nick.contains(AGE_PAT2) {
             if let Some(birthday) = user_data.birthday {
