@@ -16,7 +16,6 @@ use serenity::all::{
 };
 use std::convert::TryInto;
 use std::io::Cursor;
-use tracing::debug;
 
 const SIT_ONE: (u32, u32) = (385, 64);
 const SIT_WITH: (u32, u32, u32, u32) = (240, 64, 580, 64);
@@ -168,7 +167,7 @@ async fn sit_check(
     let title = if let Some(guild) = guild {
         if users.is_empty() {
             let users = db
-                .get_users(
+                .read_users(
                     guild,
                     match sort_by {
                         RankSortBy::Default | RankSortBy::Sits => {
@@ -200,7 +199,7 @@ async fn sit_check(
                 .collect::<Vec<String>>()
                 .join(", ");
             let users_data = db
-                .get_users(guild, &format!("AND user_id IN ({user_query})"))
+                .read_users(guild, &format!("AND user_id IN ({user_query})"))
                 .await?;
 
             for user in users {
@@ -235,34 +234,20 @@ async fn sit_check(
             "Sit Data For Users"
         }
     } else {
-        // TODO - there should be a more efficient way to do this, i.e. with a single query
         // get any guild that this user has data in.
-        let guilds = db.get_user_guilds(Some(user.id)).await?;
+        let data_in_guilds = db.read_user_guilds(user.id, "").await?;
 
-        debug!(
-            "Checking user {} sit data in guilds: {:#?}",
-            user.id, guilds
-        );
-
-        for guild in guilds {
-            let user_key = UserKey {
-                user: user.id.into(),
-                guild: guild.into(),
-            };
-            let (sit_count, flip_count) = db
-                .read(&user_key)
-                .await?
-                .map(|data| (data.sit_count, data.flip_count))
-                .unwrap_or_default();
+        for data_in_guild in data_in_guilds {
+            let guild = GuildId::new(data_in_guild.id.guild as u64);
             let name = if let Some(name) = guild.name(&ctx.cache) {
                 name
             } else {
-                guild.to_partial_guild(&ctx.http).await?.name
+                guild.to_partial_guild(&ctx).await?.name
             };
             sit_data.push(RankingData {
                 name,
-                sit_count,
-                flip_count,
+                sit_count: data_in_guild.sit_count,
+                flip_count: data_in_guild.flip_count,
             });
         }
 

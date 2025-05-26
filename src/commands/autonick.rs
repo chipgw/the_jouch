@@ -79,8 +79,8 @@ pub async fn check_nicks_loop(ctx: Context) {
         let guilds = {
             let data = ctx.data.read().await;
             if let Some(db) = data.get::<Db>() {
-                // we want any guild that has a user (any user) in the user collection
-                // only the user collection matters as with no user there's no nickname to update
+                // we want any guild that has a user (any user) in the user table
+                // only the user table matters as with no user there's no nickname to update
                 // TODO - could be made even more efficient by filtering to only users with a nickname
                 db.get_user_guilds(None).await.unwrap_or_default()
             } else {
@@ -104,7 +104,7 @@ async fn check_nicks_in_guild(ctx: &Context, guild: GuildId) -> CommandResult {
     let data = ctx.data.read().await;
     let db = data.get::<Db>().ok_or(anyhow!("Unable to get database"))?;
 
-    let users = db.get_users(guild, "AND auto_nick IS NOT NULL").await?;
+    let users = db.read_users(guild, "AND auto_nick IS NOT NULL").await?;
 
     for user in &users {
         if let Err(e) = check_nick_user(ctx, user).await {

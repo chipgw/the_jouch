@@ -189,7 +189,7 @@ pub async fn todays_birthdays(ctx: &Context, guild: GuildId) -> CommandResult<St
     let db = data.get::<Db>().ok_or(anyhow!("Unable to get database"))?;
 
     let users = db
-        .get_users(
+        .read_users(
             guild,
             "AND DATE_PART('doy', birthday) = DATE_PART('doy', CURRENT_DATE)",
         )
@@ -286,7 +286,7 @@ pub async fn check_birthdays_loop(ctx: Context) {
         let guilds = {
             let data = ctx.data.read().await;
             if let Some(db) = data.get::<Db>() {
-                // If a guild has a channel set it will appear in the guilds collection, so no need to check user collection.
+                // If a guild has a channel set it will appear in the guilds table, so no need to check user table.
                 db.get_guilds().await.unwrap_or_default()
             } else {
                 error!("error getting database");

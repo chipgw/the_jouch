@@ -49,7 +49,7 @@ impl Handler {
         CreateCommand::new("flip").description("Flip The Jouch"),
         CreateCommand::new("flip").kind(CommandType::Message),
         CreateCommand::new("rectify").description("Put The Jouch back upright"),
-        CreateCommand::new("birthday").description("Birthday tracking by The Jouch")
+        CreateCommand::new("birthday").description("Birthday tracking by The Jouch").add_integration_type(serenity::all::InstallationContext::Guild)
             .add_option(CreateCommandOption::new(CommandOptionType::SubCommand, "set", "set your birthday")
                 .add_sub_option(CreateCommandOption::new(CommandOptionType::String, "birthday", "Birthday date string")
                         .required(true))
@@ -63,7 +63,7 @@ impl Handler {
                 .add_sub_option(CreateCommandOption::new(CommandOptionType::User, "user", "a user to check on"))
             )
             .add_option(CreateCommandOption::new(CommandOptionType::SubCommand, "clear", "clear your birthday")),
-        CreateCommand::new("autonick").description("Automatic nickname updating tracking by The Jouch")
+        CreateCommand::new("autonick").description("Automatic nickname updating tracking by The Jouch").add_integration_type(serenity::all::InstallationContext::Guild)
             .add_option(CreateCommandOption::new(CommandOptionType::SubCommand,"set","set your nickname format string")
                 .add_sub_option(
                     CreateCommandOption::new(CommandOptionType::String, "nickname", 
@@ -152,16 +152,16 @@ impl EventHandler for Handler {
                     commands.push(
                         CreateCommand::new("migrate")
                             .default_member_permissions(Permissions::ADMINISTRATOR)
-                            .description("Migrate data from Ron files to the new MongoDB storage.")
+                            .description("Migrate data from Ron files to Postgres storage, or export for later import (pass no arguments to export).")
                             .add_option(CreateCommandOption::new(
                                 CommandOptionType::Attachment,
                                 "jouch_db",
-                                "a jouch_db.ron file from prior to the MongoDB switch.",
+                                "a jouch_db.ron file, as exported by `/migrate` or from prior to the migration to Shuttle.",
                             ))
                             .add_option(CreateCommandOption::new(
                                 CommandOptionType::Attachment,
                                 "config",
-                                "a config.ron file from prior to the MongoDB switch.",
+                                "a config.ron file, as exported by `/migrate` or from prior to the migration to Shuttle.",
                             )),
                     );
                     commands
@@ -211,7 +211,7 @@ async fn serenity(
     #[shuttle_runtime::Secrets] secret_store: SecretStore,
     #[shuttle_shared_db::Postgres] db: sqlx::PgPool,
 ) -> ShuttleSerenity {
-    // Run SQL migrations; TODO
+    // Run SQL migrations
     sqlx::migrate!()
         .run(&db)
         .await

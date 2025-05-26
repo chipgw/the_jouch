@@ -106,7 +106,7 @@ impl Db {
         )
     }
 
-    pub async fn get_users(
+    pub async fn read_users(
         &self,
         guild: GuildId,
         extra_query: &str,
@@ -118,8 +118,21 @@ impl Db {
                 .await?,
         )
     }
+    // read data for specified user in all guilds
+    pub async fn read_user_guilds(
+        &self,
+        user: UserId,
+        extra_query: &str,
+    ) -> anyhow::Result<Vec<UserData>> {
+        Ok(
+            sqlx::query_as(&("SELECT * FROM users WHERE user_id = $1 ".to_owned() + extra_query))
+                .bind(user.get() as i64)
+                .fetch_all(&self.db)
+                .await?,
+        )
+    }
 
-    // get all guilds with an entry in guild collection.
+    // get all guilds with a row in guild table
     pub async fn get_guilds(&self) -> anyhow::Result<HashSet<GuildId>> {
         Ok(sqlx::query_scalar("SELECT id FROM guilds")
             .fetch_all(&self.db)
@@ -128,10 +141,10 @@ impl Db {
             .map(|a: i64| (a as u64).into())
             .collect())
     }
-    // get all guilds with a user (specified or any) in user collection
+    // get all guilds with a user (specified or any) in user table
     pub async fn get_user_guilds(&self, user: Option<UserId>) -> anyhow::Result<HashSet<GuildId>> {
         Ok(if let Some(user) = user {
-            sqlx::query_scalar("SELECT DISTINCT guild_id FROM users WHERE user_id = $1")
+            sqlx::query_scalar("SELECT guild_id FROM users WHERE user_id = $1")
                 .bind(user.get() as i64)
         } else {
             sqlx::query_scalar("SELECT DISTINCT guild_id FROM users")

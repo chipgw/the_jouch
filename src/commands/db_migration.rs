@@ -1,7 +1,7 @@
 use crate::{
     canned_responses::ResponseTable,
     commands::{birthday::BirthdayPrivacy, sit::JouchOrientation},
-    db::{Db, UserKey},
+    db::Db,
 };
 use anyhow::anyhow;
 use anyhow::bail;
@@ -15,11 +15,12 @@ use serenity::{
     all::{
         ButtonStyle, CommandInteraction, Context, CreateActionRow, CreateButton,
         CreateInteractionResponse, CreateInteractionResponseFollowup,
-        CreateInteractionResponseMessage, EditMessage, GuildId, ResolvedValue,
+        CreateInteractionResponseMessage, EditMessage, ResolvedValue,
     },
     builder::CreateAttachment,
     json::json,
 };
+use sqlx::QueryBuilder;
 use std::collections::HashMap;
 use tracing::debug;
 
@@ -59,13 +60,16 @@ pub async fn migrate(ctx: &Context, command: &CommandInteraction) -> anyhow::Res
         let data = ctx.data.read().await;
         let db = data.get::<Db>().ok_or(anyhow!("Unable to get database"))?;
 
-        let guilds = db.get_guilds().await?;
+        let mut guilds = db.get_guilds().await?;
+        // It's possible that a guild has users but lacks a row in the guilds table,
+        // so we also add any guilds found referenced in the users table
+        guilds.extend(db.get_user_guilds(None).await?);
 
         let mut db_data: DbData = DbData::new();
 
         for guild in guilds {
-            let guild_data_db = db.read_guild(guild).await?.unwrap();
-            let users = db.get_users(guild, "").await?;
+            let guild_data_db = db.read_guild(guild).await?.unwrap_or_default();
+            let users = db.read_users(guild, "").await?;
             let guild_data = GuildData {
                 users: users
                     .iter()
@@ -159,62 +163,53 @@ pub async fn migrate(ctx: &Context, command: &CommandInteraction) -> anyhow::Res
                         let db_data: DbData = from_bytes(&data)?;
 
                         let data = ctx.data.read().await;
-                        let db = data.get::<Db>().ok_or(anyhow!("Unable to get database"))?;
+                        let db = data
+                            .get::<Db>()
+                            .ok_or(anyhow!("Unable to get database"))?
+                            .pool();
+
+                        sqlx::query("TRUNCATE guilds").execute(db).await?;
+                        sqlx::query("TRUNCATE users").execute(db).await?;
+
+                        let mut guilds_insert_query = QueryBuilder::new(
+                                "INSERT INTO guilds (id, birthday_announce_channel, birthday_announce_when_none, canned_response_table, jouch_orientation) ");
+
+                        guilds_insert_query.push_values(
+                            db_data.iter(),
+                            |mut b, (id, guild_data)| {
+                                b.push_bind(*id as i64)
+                                    .push_bind(
+                                        guild_data.birthday_announce_channel.map(|x| x as i64),
+                                    )
+                                    .push_bind(guild_data.birthday_announce_when_none)
+                                    .push_bind(json!(guild_data.canned_response_table))
+                                    .push_bind(guild_data.jouch_orientation);
+                            },
+                        );
+
+                        guilds_insert_query.build().execute(db).await?;
+
+                        let mut users_insert_query = QueryBuilder::new(
+                            "INSERT INTO users (user_id, guild_id, birthday, birthday_privacy, auto_nick, sit_count, flip_count) ");
 
                         for (guild_id, guild_data) in &db_data {
-                            let guild_id = GuildId::from(*guild_id);
-                            db.update_guild(
-                                guild_id,
-                                "birthday_announce_channel",
-                                guild_data.birthday_announce_channel.map(|x| x as i64),
-                            )
-                            .await?;
-                            db.update_guild(
-                                guild_id,
-                                "birthday_announce_when_none",
-                                guild_data.birthday_announce_when_none,
-                            )
-                            .await?;
-                            db.update_guild(
-                                guild_id,
-                                "canned_response_table",
-                                json!(guild_data.canned_response_table),
-                            )
-                            .await?;
-                            db.update_guild(
-                                guild_id,
-                                "jouch_orientation",
-                                guild_data.jouch_orientation,
-                            )
-                            .await?;
+                            // TODO - this could end up getting too big for a single query
+                            users_insert_query.push_values(
+                                guild_data.users.iter(),
+                                |mut b, (user_id, user_data)| {
+                                    b.push_bind(*user_id as i64)
+                                        .push_bind(*guild_id as i64)
+                                        .push_bind(user_data.birthday)
+                                        .push_bind(user_data.birthday_privacy)
+                                        .push_bind(user_data.auto_nick.clone())
+                                        .push_bind(user_data.sit_count.unwrap_or_default() as i64)
+                                        .push_bind(user_data.flip_count.unwrap_or_default() as i64);
+                                },
+                            );
 
-                            for (user_id, user_data) in &guild_data.users {
-                                let user_key = UserKey {
-                                    user: *user_id as i64,
-                                    guild: guild_id.into(),
-                                };
-                                db.update(&user_key, "birthday", user_data.birthday).await?;
-                                db.update(
-                                    &user_key,
-                                    "birthday_privacy",
-                                    user_data.birthday_privacy,
-                                )
-                                .await?;
-                                db.update(&user_key, "auto_nick", user_data.auto_nick.clone())
-                                    .await?;
-                                db.update(
-                                    &user_key,
-                                    "sit_count",
-                                    user_data.sit_count.unwrap_or_default() as i64,
-                                )
-                                .await?;
-                                db.update(
-                                    &user_key,
-                                    "flip_count",
-                                    user_data.flip_count.unwrap_or_default() as i64,
-                                )
-                                .await?;
-                            }
+                            users_insert_query.build().execute(db).await?;
+                            // leave query ready for the next loop.
+                            users_insert_query.reset();
                         }
                     }
                     "config" => {
