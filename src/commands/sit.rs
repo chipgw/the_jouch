@@ -53,7 +53,8 @@ impl JouchOrientation {
 
 #[derive(TryFromRepr)]
 #[repr(u8)]
-enum RankSortBy {
+pub enum RankSortBy {
+    Default,
     Sits,
     Flips,
 }
@@ -170,14 +171,16 @@ async fn sit_check(
                 .get_users(
                     guild,
                     match sort_by {
-                        RankSortBy::Sits => "ORDER BY sit_count DESC, flip_count DESC LIMIT 10",
+                        RankSortBy::Default | RankSortBy::Sits => {
+                            "ORDER BY sit_count DESC, flip_count DESC LIMIT 10"
+                        }
                         RankSortBy::Flips => "ORDER BY flip_count DESC, sit_count DESC LIMIT 10",
                     },
                 )
                 .await?;
 
             for user_data in users {
-                let user = Into::<UserId>::into(user_data.id.user as u64)
+                let user: User = Into::<UserId>::into(user_data.id.user as u64)
                     .to_user(ctx)
                     .await?;
                 let name = user.nick_in(ctx, guild).await.unwrap_or(user.name);
@@ -190,24 +193,45 @@ async fn sit_check(
 
             "Sit Leaderboard"
         } else {
-            // TODO - there should be a more efficient way to do this, i.e. with a single query
+            // Get the data for all specified users in a single query.
+            let user_query = users
+                .iter()
+                .map(|u| u.id.to_string())
+                .collect::<Vec<String>>()
+                .join(", ");
+            let users_data = db
+                .get_users(guild, &format!("AND user_id IN ({user_query})"))
+                .await?;
+
             for user in users {
-                let key = UserKey {
-                    user: user.id.into(),
-                    guild: guild.into(),
-                };
                 let name = user.nick_in(ctx, guild).await.unwrap_or(user.name.clone());
-                let (sit_count, flip_count) = db
-                    .read(&key)
-                    .await?
-                    .map(|data| (data.sit_count, data.flip_count))
-                    .unwrap_or_default();
-                sit_data.push(RankingData {
-                    name,
-                    sit_count,
-                    flip_count,
-                });
+                if let Some(user_data) = users_data.iter().find(|u| user.id == u.id.user as u64) {
+                    sit_data.push(RankingData {
+                        name,
+                        sit_count: user_data.sit_count,
+                        flip_count: user_data.flip_count,
+                    });
+                } else {
+                    // User not found in database; still include with 0 since they asked.
+                    sit_data.push(RankingData {
+                        name,
+                        sit_count: 0,
+                        flip_count: 0,
+                    });
+                }
             }
+
+            match sort_by {
+                RankSortBy::Default => { /* leave in the order users were passed to the function */
+                }
+                RankSortBy::Sits => {
+                    sit_data.sort_by(|a, b| b.sit_count.cmp(&a.sit_count));
+                }
+                RankSortBy::Flips => {
+                    sit_data.sort_by(|a, b| b.flip_count.cmp(&a.flip_count));
+                }
+            }
+
             "Sit Data For Users"
         }
     } else {
@@ -242,24 +266,47 @@ async fn sit_check(
             });
         }
 
+        match sort_by {
+            RankSortBy::Default => { /* leave in the order the entries were found in the database */
+            }
+            RankSortBy::Sits => {
+                sit_data.sort_by(|a, b| b.sit_count.cmp(&a.sit_count));
+            }
+            RankSortBy::Flips => {
+                sit_data.sort_by(|a, b| b.flip_count.cmp(&a.flip_count));
+            }
+        }
+
         "Sit data in all servers"
     };
 
     let mut embed = CreateEmbed::default();
 
     for data in sit_data {
-        if data.sit_count <= 0 && data.flip_count <= 0 {
-            // We have neither sit nore flip data, so don't display at all.
+        if users.is_empty() && data.sit_count <= 0 && data.flip_count <= 0 {
+            // We have neither sit nor flip data and we weren't asked for by name, so don't display at all.
             continue;
         }
         let mut msg = MessageBuilder::new();
-        if data.sit_count > 0 {
-            msg.push("Times on The Jouch: ")
-                .push_line(data.sit_count.to_string());
-        }
-        if data.flip_count > 0 {
-            msg.push("Flips of The Jouch: ")
-                .push_line(data.flip_count.to_string());
+
+        let sit_str = format!("Times on The Jouch: {}", data.sit_count);
+        let flip_str = format!("Flips of The Jouch: {}", data.flip_count);
+
+        // if we were asked for by name, show both even if zero, but if we weren't, only show nonzero.
+        if !users.is_empty() || (data.sit_count > 0 && data.flip_count > 0) {
+            // makes sense to put the one that's being sorted by first.
+            match sort_by {
+                RankSortBy::Flips => {
+                    msg.push_line(flip_str).push_line(sit_str);
+                }
+                RankSortBy::Default | RankSortBy::Sits => {
+                    msg.push_line(sit_str).push_line(flip_str);
+                }
+            };
+        } else if data.flip_count > 0 {
+            msg.push_line(flip_str);
+        } else {
+            msg.push_line(sit_str);
         }
         embed = embed.field(data.name, msg.build(), false);
     }
@@ -456,7 +503,7 @@ pub async fn sit(ctx: &Context, command: &CommandInteraction) -> CommandResult {
 pub async fn rank(ctx: &Context, command: &CommandInteraction) -> CommandResult {
     let mut users = Vec::new();
 
-    let mut sort_by = RankSortBy::Sits;
+    let mut sort_by = RankSortBy::Default;
 
     for arg in &command.data.options() {
         if let ResolvedValue::User(user, _) = arg.value {
@@ -493,8 +540,8 @@ pub async fn flip(ctx: &Context, command: &CommandInteraction) -> CommandResult 
             .ok_or(anyhow!("Unable to get database"))?;
         increment_flip_counter(db, &command.user, guild).await?;
         db.update_guild(guild, "jouch_orientation", new_orientation)
-            .await?; 
-        
+            .await?;
+
         let _ = check_nick_user_key(
             ctx,
             &UserKey {

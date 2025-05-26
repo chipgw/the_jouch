@@ -33,9 +33,10 @@ impl Handler {
                 .add_option(CreateCommandOption::new(CommandOptionType::User, "friend", "a friend to sit on The Jouch with")),
         {
             let mut options = vec![
-                CreateCommandOption::new(CommandOptionType::Integer, "sort", "what to sort users by (ignored when specifying users)")
-                    .add_int_choice("Sits", 0)
-                    .add_int_choice("Flips", 1)
+                CreateCommandOption::new(CommandOptionType::Integer, "sort", "what to sort users by")
+                    // RankSortBy::Default is used to indicate no option was passed, and thus doesn't get added here.
+                    .add_int_choice("Sits", RankSortBy::Sits as i32)
+                    .add_int_choice("Flips", RankSortBy::Flips as i32)
             ];
 
             // allow up to 10 users to check in on.
