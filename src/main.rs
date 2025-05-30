@@ -67,7 +67,7 @@ impl Handler {
             .add_option(CreateCommandOption::new(CommandOptionType::SubCommand,"set","set your nickname format string")
                 .add_sub_option(
                     CreateCommandOption::new(CommandOptionType::String, "nickname", 
-                        "format string; %a will be replaced with age, %j with times sat on The Jouch, and %f with times flipping The Jouch")
+                        "format string; %a becomes age (requires birthday), %j & %f times sat on & flipping The Jouch")
                         .required(true)
                 )
             )
@@ -123,7 +123,11 @@ impl EventHandler for Handler {
 
         let commands = Command::set_global_commands(&ctx.http, Handler::create_commands()).await;
 
-        trace!("I now have the following slash commands: {:#?}", commands);
+        if let Err(err) = commands {
+            warn!("Error setting slash commands: {err}");
+        } else {
+            trace!("I now have the following slash commands: {:#?}", commands);
+        }
 
         let data = ctx.data.read().await;
 
