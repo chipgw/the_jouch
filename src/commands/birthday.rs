@@ -1,6 +1,7 @@
 use crate::db::{Db, UserData, UserKey};
 use crate::CommandResult;
 use anyhow::anyhow;
+use chrono::format::{parse, Parsed, StrftimeItems};
 use chrono::{prelude::*, Duration};
 use enum_utils::FromStr;
 use serde::{Deserialize, Serialize};
@@ -19,10 +20,18 @@ const DATE_OPTIONS: &[&str] = &[
     "%m/%d/%Y", // e.g. 01/30/1990
 ];
 const TIME_OPTIONS: &[&str] = &[
-    "T%H:%M%:z", // e.g. T12:30
-    "T%H:%M%#z", // e.g. T12:30
-    "",          // no time provided
+    "%l:%M%p", // e.g. 12:30pm
+    "%l:%M%P", // e.g. 12:30PM
+    "%H:%M",   // e.g. 12:30
+    "%l%p",    // e.g. 12pm
+    "%l%P",    // e.g. 12PM
 ];
+const ZONE_OPTIONS: &[&str] = &[
+    "%:z", // e.g. -05:00
+    "%#z", // e.g. -05 or -0500
+];
+// Default to CST
+const DEFAULT_OFFSET: FixedOffset = FixedOffset::west_opt(21600).unwrap();
 
 #[derive(Eq, PartialEq, Debug, Serialize, Deserialize, Clone, Copy, FromStr, sqlx::Type)]
 #[sqlx(type_name = "birthday_privacy")]
@@ -60,40 +69,95 @@ pub fn get_jesus_birthday() -> NaiveDate {
     NaiveDate::from_ymd_opt(0, 12, 25).unwrap()
 }
 
-pub fn parse_date(date_str: &str) -> CommandResult<DateTime<FixedOffset>> {
-    // Default to CST
-    let default_offset = FixedOffset::west_opt(21600).unwrap();
+pub fn parse_date(
+    in_str: &str,
+    default_time: Option<NaiveTime>,
+    default_date: Option<DateTime<FixedOffset>>,
+) -> CommandResult<DateTime<FixedOffset>> {
+    let mut parsed = Parsed::new();
 
-    let mut format_str = String::with_capacity(10);
+    // TODO - all this splitting could probably stand to be a little more robust...
+    let (date_str, time_str) = in_str.split_once([' ', 'T']).unwrap_or((in_str, in_str));
+    // if above split failed, time_str may have '-' from the date, but if that's the case it doesn't contain the time anyway so who cares
+    let (time_str, zone_str) = time_str
+        .split_at_checked(time_str.rfind(['+', '-']).unwrap_or(usize::MAX))
+        .unwrap_or((time_str, time_str));
+
     for date_option in DATE_OPTIONS {
-        for time_option in TIME_OPTIONS {
-            format_str.clear();
-            format_str.push_str(date_option);
-            format_str.push_str(time_option);
-
-            trace!("Trying format_str: \"{}\"", format_str);
-
-            // Trying with no time zone uses different parse function than trying with time zone
-            let parsed_date = if time_option.is_empty() {
-                NaiveDate::parse_from_str(date_str, format_str.as_str()).map(|datetime| {
-                    default_offset
-                        .from_local_datetime(
-                            &datetime.and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap()),
-                        )
-                        .unwrap()
-                })
-            } else {
-                DateTime::parse_from_str(date_str, format_str.as_str())
-            };
-
-            match parsed_date {
-                Ok(date) => return Ok(date),
-                Err(err) => trace!(" failed with reason: {}", err),
-            }
+        trace!("Trying date format string: `{date_option}` on {date_str}");
+        if let Err(err) = parse(&mut parsed, date_str, StrftimeItems::new(date_option)) {
+            trace!(" parse failed with reason: {}", err);
+        } else {
+            break;
         }
     }
+    for time_option in TIME_OPTIONS {
+        trace!("Trying time format string: `{time_option}` on {time_str}");
+        if let Err(err) = parse(&mut parsed, time_str, StrftimeItems::new(time_option)) {
+            trace!(" parse failed with reason: {}", err);
+        } else {
+            break;
+        }
+    }
+    for zone_option in ZONE_OPTIONS {
+        trace!("Trying zone format string: `{zone_option}` on {zone_str}");
+        if let Err(err) = parse(&mut parsed, zone_str, StrftimeItems::new(zone_option)) {
+            trace!(" parse failed with reason: {}", err);
+        } else {
+            break;
+        }
+    }
+
+    trace!("parsed: {:?}", parsed);
+
+    let parsed_date = if parsed.hour_mod_12().is_none() {
+        if let Some(default_time) = default_time {
+            parsed.to_naive_date().map(|date| {
+                date.and_time(default_time)
+                    .and_local_timezone(default_date.map_or(DEFAULT_OFFSET, |x| x.timezone()))
+                    .unwrap()
+            })
+        } else {
+            return Err(anyhow!("Only date passed, but time is required!"));
+        }
+    } else if parsed.day().is_none() {
+        if let Some(default_date) = default_date {
+            let offset = parsed.to_fixed_offset().unwrap_or(DEFAULT_OFFSET);
+            // convert the default date into the timezone being supplied before joining
+            let converted_default = default_date.with_timezone(&offset).date_naive();
+
+            parsed.to_naive_time().map(|time| {
+                converted_default
+                    .and_time(time)
+                    .and_local_timezone(offset)
+                    .unwrap()
+            })
+        } else {
+            return Err(anyhow!("Only time passed, but date is required!"));
+        }
+    } else {
+        // This will only set if it isn't already.
+        let _ = parsed.set_offset(DEFAULT_OFFSET.local_minus_utc() as i64);
+        parsed.to_datetime()
+    };
+
+    match parsed_date {
+        Ok(date) => {
+            trace!("parsed date: {date}");
+            return Ok(date);
+        }
+        Err(err) => trace!(" conversion failed with reason: {err}"),
+    }
+
     Err(anyhow!(
-        "Unable to parse date '{}'\nSupported formats are: `YYYY-MM-DD` & `MM/DD/YYYY`",
+        "Unable to parse date/time '{}'
+        Supported date formats are: `YYYY-MM-DD` & `MM/DD/YYYY`
+        Supported time formats are: `HHam`, `HHAM`, `HH:MMam`, `HH:MMAM`, & `HH:MM` (24 hour)
+        Time can be followed by a time zone offset from UTC; supported formats: `±ZZ:ZZ`, `±ZZZZ`, or `±ZZ`
+        When entering both date & time, use a space or a 'T' to separate them, e.g. `2021-07-31T15:00-0500`
+        Time zone is assumed to be CST if not provided
+        Not all parsed components may be relevant everywhere parsing function is used (e.g. time isn't usually useful for birthdays)
+        All this complicated mess could be avoided if Discord added a date picker component",
         date_str
     ))
 }
@@ -126,7 +190,7 @@ pub async fn set_birthday(
     date_str: &str,
     privacy: Option<BirthdayPrivacy>,
 ) -> CommandResult<String> {
-    let date = parse_date(date_str)?;
+    let date = parse_date(date_str, Some(NaiveTime::default()), None)?;
 
     let mut data = ctx.data.write().await;
     let db = data

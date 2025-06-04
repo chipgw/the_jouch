@@ -9,7 +9,7 @@ edition = "2018"
 [dependencies]
 # use default features minus framework & standard_framework
 serenity = { version = "0.12", default-features = false, features = ["builder", "cache", "client", "collector", "gateway", "http", "model", "utils", "rustls_backend"] }
-tokio = "1.34"
+tokio = "1.45"
 mini-redis = "*"
 chrono = { version ="0.4", features = ["serde"] }
 serde = "1.0"
