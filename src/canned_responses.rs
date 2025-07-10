@@ -1,4 +1,5 @@
 use anyhow::anyhow;
+use rand::distr::{weighted::WeightedIndex, Distribution};
 use serde::{Deserialize, Serialize};
 use serenity::{
     model::channel::{Message, ReactionType},
@@ -14,6 +15,23 @@ use crate::{config::Config, db::Db};
 pub enum Response {
     Reply(String),
     Reaction(String),
+    // list of responses with the weight at which they should be chosen
+    RandomChance(Vec<(u64, Response)>),
+    // indended for use in RandomChance responses, to make it possible for it to have a chance of not responding at all
+    NoResponse,
+}
+
+impl Response {
+    fn flatten(&self) -> CommandResult<&Self> {
+        if let Response::RandomChance(items) = self {
+            let index = WeightedIndex::new(items.iter().map(|(x, _)| x))?;
+            let (_, chosen) = &items[index.sample(&mut rand::rng())];
+            // technically allows nesting, but why would you want to?
+            chosen.flatten()
+        } else {
+            Ok(self)
+        }
+    }
 }
 
 #[derive(Eq, PartialEq, Serialize, Deserialize, Clone, Debug)]
@@ -93,17 +111,27 @@ impl ResponseTable {
     }
 }
 
+async fn handle_response(response: &Response, ctx: &Context, msg: &Message) -> CommandResult {
+    match response.flatten()? {
+        Response::Reaction(emote) => {
+            msg.react(ctx, ReactionType::try_from(emote.as_str())?)
+                .await?;
+        }
+        Response::Reply(reply) => {
+            msg.reply(ctx, reply).await?;
+        }
+        Response::RandomChance(_) => {
+            return Err(anyhow!("Response::RandomChance failed to flatten!"))
+        }
+        Response::NoResponse => (),
+    };
+    Ok(())
+}
+
 async fn handle_responses(responses: Vec<Response>, ctx: &Context, msg: &Message) -> CommandResult {
     for response in responses {
-        let result = match &response {
-            Response::Reaction(emote) => msg
-                .react(ctx, ReactionType::try_from(emote.as_str())?)
-                .await
-                .err(),
-            Response::Reply(reply) => msg.reply(ctx, reply).await.err(),
-        };
         // handle the error here so we can continue to go through any other responses
-        if let Some(err) = result {
+        if let Err(err) = handle_response(&response, ctx, msg).await {
             error!("Error processing canned response {:?}: {:?}", response, err);
         }
     }
