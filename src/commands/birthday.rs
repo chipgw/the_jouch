@@ -83,34 +83,37 @@ pub fn parse_date(
         .split_at_checked(time_str.rfind(['+', '-']).unwrap_or(usize::MAX))
         .unwrap_or((time_str, time_str));
 
-    for date_option in DATE_OPTIONS {
+    let has_date = DATE_OPTIONS.iter().any(|date_option| {
         trace!("Trying date format string: `{date_option}` on {date_str}");
         if let Err(err) = parse(&mut parsed, date_str, StrftimeItems::new(date_option)) {
             trace!(" parse failed with reason: {}", err);
+            false
         } else {
-            break;
+            true
         }
-    }
-    for time_option in TIME_OPTIONS {
+    });
+    let has_time = TIME_OPTIONS.iter().any(|time_option| {
         trace!("Trying time format string: `{time_option}` on {time_str}");
         if let Err(err) = parse(&mut parsed, time_str, StrftimeItems::new(time_option)) {
             trace!(" parse failed with reason: {}", err);
+            false
         } else {
-            break;
+            true
         }
-    }
-    for zone_option in ZONE_OPTIONS {
+    });
+    let _has_zone = ZONE_OPTIONS.iter().any(|zone_option| {
         trace!("Trying zone format string: `{zone_option}` on {zone_str}");
         if let Err(err) = parse(&mut parsed, zone_str, StrftimeItems::new(zone_option)) {
             trace!(" parse failed with reason: {}", err);
+            false
         } else {
-            break;
+            true
         }
-    }
+    });
 
     trace!("parsed: {:?}", parsed);
 
-    let parsed_date = if parsed.hour_mod_12().is_none() {
+    let parsed_date = if !has_time {
         if let Some(default_time) = default_time {
             parsed.to_naive_date().map(|date| {
                 date.and_time(default_time)
@@ -120,7 +123,7 @@ pub fn parse_date(
         } else {
             return Err(anyhow!("Only date passed, but time is required!"));
         }
-    } else if parsed.day().is_none() {
+    } else if !has_date {
         if let Some(default_date) = default_date {
             let offset = parsed.to_fixed_offset().unwrap_or(DEFAULT_OFFSET);
             // convert the default date into the timezone being supplied before joining
