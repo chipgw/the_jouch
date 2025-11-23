@@ -46,7 +46,7 @@ impl Handler {
                 options
             }),
             CreateCommand::new("novena").description("Manage scheduled novena messages")
-                .default_member_permissions(Permissions::ADMINISTRATOR)
+                .default_member_permissions(Permissions::MANAGE_EVENTS)
                 .add_option(CreateCommandOption::new(CommandOptionType::SubCommand, "unique", "start a novena with a unique prayer for each day")
                     .set_sub_options({
                         let mut options = vec![
@@ -89,7 +89,7 @@ impl Handler {
             CreateCommand::new("autonick").description("Automatic nickname updating tracking by The Jouch").add_integration_type(serenity::all::InstallationContext::Guild)
                 .add_option(CreateCommandOption::new(CommandOptionType::SubCommand,"set","set your nickname format string")
                     .add_sub_option(
-                        CreateCommandOption::new(CommandOptionType::String, "nickname", 
+                        CreateCommandOption::new(CommandOptionType::String, "nickname",
                             "format string; %a becomes age (requires birthday), %j & %f times sat on & flipping The Jouch")
                             .required(true)
                     )
