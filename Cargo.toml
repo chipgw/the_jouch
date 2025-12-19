@@ -4,6 +4,9 @@ version = "0.1.0"
 authors = ["David <gw.chip.gw@gmail.com>"]
 edition = "2018"
 
+[features]
+log-json = ["tracing-subscriber/json"]
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
@@ -22,3 +25,4 @@ rand="*"
 sqlx = {version = "*", features = ["runtime-tokio", "postgres", "chrono"] }
 anyhow = "*"
 tracing = "*"
+tracing-subscriber = "*"

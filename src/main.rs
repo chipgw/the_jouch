@@ -225,6 +225,15 @@ impl TypeMapKey for EnvItemsContainer {
 
 #[tokio::main]
 async fn main() {
+    #[cfg(feature = "log-json")]
+    let subscriber = tracing_subscriber::fmt().json().finish();
+
+    #[cfg(not(feature = "log-json"))]
+    let subscriber = tracing_subscriber::fmt().finish();
+
+    tracing::subscriber::set_global_default(subscriber)
+        .expect("Unable to set tracing default subscriber");
+
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let token = std::env::var("DISCORD_TOKEN").expect("DISCORD_TOKEN must be set");
     let app_id = std::env::var("DISCORD_APP_ID").expect("DISCORD_APP_ID must be set");
