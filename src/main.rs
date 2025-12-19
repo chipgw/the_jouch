@@ -14,9 +14,6 @@ use serenity::all::{
 use serenity::model::Permissions;
 use serenity::prelude::TypeMapKey;
 use serenity::{async_trait, Client};
-use shuttle_runtime;
-use shuttle_runtime::SecretStore;
-use shuttle_serenity::ShuttleSerenity;
 use tracing::{error, info, trace, warn};
 
 use commands::{autonick::*, birthday::*, clear::*, db_migration::migrate, novena::*, sit::*};
@@ -155,11 +152,8 @@ impl EventHandler for Handler {
 
         let data = ctx.data.read().await;
 
-        let testing_guild = if let Some(shuttle_items) = data.get::<ShuttleItemsContainer>() {
-            shuttle_items
-                .secret_store
-                .get("test_guild")
-                .and_then(|id| id.parse::<u64>().ok())
+        let testing_guild = if let Some(shuttle_items) = data.get::<EnvItemsContainer>() {
+            shuttle_items.test_guild
         } else {
             None
         };
@@ -220,58 +214,54 @@ impl EventHandler for Handler {
     }
 }
 
-macro_rules! outer {
-    ($($tts:tt)*) => {
-        shuttle_runtime::Error::Custom(anyhow!($($tts)*))
-    }
-}
-
-struct ShuttleItemsContainer {
-    secret_store: SecretStore,
+struct EnvItemsContainer {
+    test_guild: Option<u64>,
     assets_dir: PathBuf,
 }
 
-impl TypeMapKey for ShuttleItemsContainer {
-    type Value = ShuttleItemsContainer;
+impl TypeMapKey for EnvItemsContainer {
+    type Value = EnvItemsContainer;
 }
 
-#[shuttle_runtime::main]
-async fn serenity(
-    #[shuttle_runtime::Secrets] secret_store: SecretStore,
-    #[shuttle_shared_db::Postgres] db: sqlx::PgPool,
-) -> ShuttleSerenity {
+#[tokio::main]
+async fn main() {
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let token = std::env::var("DISCORD_TOKEN").expect("DISCORD_TOKEN must be set");
+    let app_id = std::env::var("DISCORD_APP_ID").expect("DISCORD_APP_ID must be set");
+    let test_guild = std::env::var("DISCORD_TEST_GUILD").ok();
+
+    let db = sqlx::PgPool::connect(&database_url).await.unwrap();
+
     // Run SQL migrations
     sqlx::migrate!()
         .run(&db)
         .await
         .expect("Failed to run migrations");
 
-    let token = secret_store
-        .get("discord_token")
-        .ok_or(outer!("Unable to load token from secret store!"))?;
-    let app_id = secret_store
-        .get("app_id")
-        .ok_or(outer!("Unable to load app id from secret store!"))?;
     let app_id = app_id
         .parse::<u64>()
-        .map_err(|e| outer!("Unable to parse app id from secret store! {}", e))?;
+        .expect("Unable to parse app id from secret store!");
+
+    let test_guild = test_guild.and_then(|guild| guild.parse::<u64>().ok());
 
     const INTENTS: GatewayIntents =
         GatewayIntents::all().difference(GatewayIntents::GUILD_PRESENCES);
 
     // Login with a bot token from the configuration file
-    let client = Client::builder(token.as_str(), INTENTS)
+    let mut client = Client::builder(token.as_str(), INTENTS)
         .event_handler(Handler)
         .application_id(app_id.into())
         .await
         .expect("Error creating client");
 
-    let config = config::Config::load(&db).await?;
+    let config = config::Config::load(&db)
+        .await
+        .expect("Unable to load config!");
 
     trace!("loaded config data: {:#?}", config);
 
-    let shuttle_items = ShuttleItemsContainer {
-        secret_store,
+    let shuttle_items = EnvItemsContainer {
+        test_guild,
         assets_dir: PathBuf::from("assets"),
     };
 
@@ -279,8 +269,11 @@ async fn serenity(
         let mut data = client.data.write().await;
         data.insert::<db::Db>(db::Db::new(db));
         data.insert::<config::Config>(config);
-        data.insert::<ShuttleItemsContainer>(shuttle_items);
+        data.insert::<EnvItemsContainer>(shuttle_items);
     }
 
-    Ok(client.into())
+    // start listening for events by starting the number of shards Discord thinks we need
+    if let Err(why) = client.start_autosharded().await {
+        println!("An error occurred while running the client: {:?}", why);
+    }
 }

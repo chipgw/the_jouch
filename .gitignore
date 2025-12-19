@@ -2,7 +2,5 @@
 *.ron
 *.json
 *.blend1
-shuttle_persist/
 *.patch
-.shuttle*
-Secrets*.toml
+.env*

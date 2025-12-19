@@ -1,7 +1,7 @@
 use super::autonick::check_nick_user_key;
 use super::birthday::is_birthday_today;
 use crate::db::{Db, UserKey};
-use crate::{CommandResult, ShuttleItemsContainer};
+use crate::{CommandResult, EnvItemsContainer};
 use anyhow::anyhow;
 use enum_utils::TryFromRepr;
 use image::ImageFormat;
@@ -310,7 +310,7 @@ async fn sit_internal(
         ctx.data
             .read()
             .await
-            .get::<ShuttleItemsContainer>()
+            .get::<EnvItemsContainer>()
             .ok_or(anyhow!("Unable to get config!"))?
             .assets_dir
             .clone()
