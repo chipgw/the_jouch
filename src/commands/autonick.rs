@@ -28,10 +28,8 @@ async fn set_nick(
     user: UserId,
     nick: Option<String>,
 ) -> CommandResult<String> {
-    let mut data = ctx.data.write().await;
-    let db = data
-        .get_mut::<Db>()
-        .ok_or(anyhow!("Unable to get database"))?;
+    let data = ctx.data.read().await;
+    let db = data.get::<Db>().ok_or(anyhow!("Unable to get database"))?;
 
     let key = UserKey {
         user: user.into(),

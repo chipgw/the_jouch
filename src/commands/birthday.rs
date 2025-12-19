@@ -166,10 +166,8 @@ pub fn parse_date(
 }
 
 pub async fn clear_birthday(ctx: &Context, guild: GuildId, user: UserId) -> CommandResult<String> {
-    let mut data = ctx.data.write().await;
-    let db = data
-        .get_mut::<Db>()
-        .ok_or(anyhow!("Unable to get database"))?;
+    let data = ctx.data.read().await;
+    let db = data.get::<Db>().ok_or(anyhow!("Unable to get database"))?;
 
     let key = UserKey {
         user: user.into(),
@@ -195,10 +193,8 @@ pub async fn set_birthday(
 ) -> CommandResult<String> {
     let date = parse_date(date_str, Some(NaiveTime::default()), None)?;
 
-    let mut data = ctx.data.write().await;
-    let db = data
-        .get_mut::<Db>()
-        .ok_or(anyhow!("Unable to get database"))?;
+    let data = ctx.data.read().await;
+    let db = data.get::<Db>().ok_or(anyhow!("Unable to get database"))?;
 
     let key = UserKey {
         user: user.into(),

@@ -140,19 +140,17 @@ async fn handle_responses(responses: Vec<Response>, ctx: &Context, msg: &Message
 }
 
 pub async fn process(ctx: &Context, msg: &Message) -> CommandResult {
-    let data = ctx.data.read().await;
-    let db = data.get::<Db>().ok_or(anyhow!("Unable to get database"))?;
-    let config = data
-        .get::<Config>()
-        .ok_or(anyhow!("Unable to get config"))?;
-
     let message_lower = msg.content.to_lowercase();
     let words = message_lower
         .split(|c: char| !c.is_alphanumeric())
         .filter(|s| !s.is_empty())
         .collect();
 
+    let data = ctx.data.read().await;
+
     if let Some(guild) = msg.guild_id {
+        let db = data.get::<Db>().ok_or(anyhow!("Unable to get database"))?;
+
         let result = db.read_guild(guild).await?.and_then(|guild| {
             guild
                 .canned_response_table
@@ -166,6 +164,9 @@ pub async fn process(ctx: &Context, msg: &Message) -> CommandResult {
     }
 
     // if we reached this point the guild didn't have a response table so we use the bot's default table
+    let config = data
+        .get::<Config>()
+        .ok_or(anyhow!("Unable to get config"))?;
     handle_responses(config.canned_response_table.process(&words), ctx, msg).await
 }
 

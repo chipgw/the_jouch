@@ -152,8 +152,8 @@ impl EventHandler for Handler {
 
         let data = ctx.data.read().await;
 
-        let testing_guild = if let Some(shuttle_items) = data.get::<EnvItemsContainer>() {
-            shuttle_items.test_guild
+        let testing_guild = if let Some(env_items) = data.get::<EnvItemsContainer>() {
+            env_items.test_guild
         } else {
             None
         };

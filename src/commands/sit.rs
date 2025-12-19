@@ -419,10 +419,8 @@ async fn sit_internal(
     base_image.write_to(&mut Cursor::new(&mut image_bytes), ImageFormat::Png)?;
 
     if let Some(guild) = guild {
-        let mut data = ctx.data.write().await;
-        let db = data
-            .get_mut::<Db>()
-            .ok_or(anyhow!("Unable to get database"))?;
+        let data = ctx.data.read().await;
+        let db = data.get::<Db>().ok_or(anyhow!("Unable to get database"))?;
         increment_sit_counter(db, user, guild).await?;
         let _ = check_nick_user_key(
             ctx,
@@ -519,11 +517,11 @@ pub async fn flip(ctx: &Context, command: &CommandInteraction) -> CommandResult 
     let new_orientation: JouchOrientation = rand::random();
 
     if let Some(guild) = command.guild_id {
-        let mut data = ctx.data.write().await;
-        let db = data
-            .get_mut::<Db>()
-            .ok_or(anyhow!("Unable to get database"))?;
+        let data = ctx.data.read().await;
+        let db = data.get::<Db>().ok_or(anyhow!("Unable to get database"))?;
+
         increment_flip_counter(db, &command.user, guild).await?;
+
         db.update_guild(guild, "jouch_orientation", new_orientation)
             .await?;
 
@@ -563,10 +561,8 @@ pub async fn rectify(ctx: &Context, command: &CommandInteraction) -> CommandResu
     let new_orientation: JouchOrientation = JouchOrientation::Normal;
 
     if let Some(guild) = command.guild_id {
-        let mut data = ctx.data.write().await;
-        let db = data
-            .get_mut::<Db>()
-            .ok_or(anyhow!("Unable to get database"))?;
+        let data = ctx.data.read().await;
+        let db = data.get::<Db>().ok_or(anyhow!("Unable to get database"))?;
         db.update_guild(guild, "jouch_orientation", new_orientation)
             .await?;
     }
