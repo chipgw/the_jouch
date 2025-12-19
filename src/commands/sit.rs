@@ -125,7 +125,7 @@ fn blend(
     Ok(())
 }
 
-pub async fn increment_sit_counter(db: &mut Db, user: &User, guild: GuildId) -> CommandResult {
+pub async fn increment_sit_counter(db: &Db, user: &User, guild: GuildId) -> CommandResult {
     let key = UserKey {
         user: user.id.into(),
         guild: guild.into(),
@@ -135,7 +135,7 @@ pub async fn increment_sit_counter(db: &mut Db, user: &User, guild: GuildId) -> 
     Ok(())
 }
 
-pub async fn increment_flip_counter(db: &mut Db, user: &User, guild: GuildId) -> CommandResult {
+pub async fn increment_flip_counter(db: &Db, user: &User, guild: GuildId) -> CommandResult {
     let key = UserKey {
         user: user.id.into(),
         guild: guild.into(),
