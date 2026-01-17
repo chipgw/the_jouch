@@ -64,6 +64,27 @@ impl Db {
         Ok(query.build_query_as().fetch_one(&self.db).await?)
     }
 
+    pub async fn increment_reaction(
+        &self,
+        user_key: &UserKey,
+        reaction: &str,
+    ) -> anyhow::Result<i32> {
+        let mut query = QueryBuilder::new(
+            "INSERT INTO reaction_tracking(guild_id, user_id, reaction, count) VALUES (",
+        );
+        query
+            .separated(",")
+            .push_bind(user_key.guild)
+            .push_bind(user_key.user)
+            .push_bind(reaction)
+            .push(1);
+        query.push(") ON CONFLICT (guild_id, user_id, reaction) DO UPDATE SET count = reaction_tracking.count + 1 RETURNING count");
+
+        debug!("query: {}", query.sql());
+
+        Ok(query.build_query_scalar().fetch_one(&self.db).await?)
+    }
+
     pub async fn update_guild<'q, T>(
         &self,
         guild: GuildId,

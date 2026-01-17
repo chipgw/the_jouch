@@ -25,7 +25,7 @@ use std::collections::HashMap;
 use tracing::debug;
 
 // only the canned_response_table & nick_interval are actually imported,
-// but the other members exist for legacy reasons; they are handled with shuttle secrets.
+// but the other members exist for legacy reasons; they are handled with env vars.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
     #[serde(default)]
@@ -236,7 +236,7 @@ pub async fn migrate(ctx: &Context, command: &CommandInteraction) -> anyhow::Res
                         config.save(db.pool()).await?;
 
                         debug!(
-                            "Config as saved in shuttle persisted storage: {:#?}",
+                            "Config as saved in database: {:#?}",
                             crate::config::Config::load(db.pool()).await
                         );
                     }

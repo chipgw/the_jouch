@@ -269,7 +269,7 @@ async fn main() {
 
     trace!("loaded config data: {:#?}", config);
 
-    let shuttle_items = EnvItemsContainer {
+    let env_items = EnvItemsContainer {
         test_guild,
         assets_dir: PathBuf::from("assets"),
     };
@@ -278,7 +278,7 @@ async fn main() {
         let mut data = client.data.write().await;
         data.insert::<db::Db>(db::Db::new(db));
         data.insert::<config::Config>(config);
-        data.insert::<EnvItemsContainer>(shuttle_items);
+        data.insert::<EnvItemsContainer>(env_items);
     }
 
     // start listening for events by starting the number of shards Discord thinks we need
